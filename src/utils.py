@@ -102,26 +102,26 @@ def create_datasets(data_path, dataset_name, num_clients, num_shards, iid):
     """Split the whole dataset in IID or non-IID manner for distributing to clients."""
     dataset_name = dataset_name.upper()
     # get dataset from torchvision.datasets if exists
-    if hasattr(torchvision.datasets, dataset_name):
+    if hasattr(datasets, dataset_name):
         # set transformation differently per dataset
         if dataset_name in ["CIFAR10"]:
-            transform = torchvision.transforms.Compose(
+            transform = transforms.Compose(
                 [
-                    torchvision.transforms.ToTensor(),
-                    torchvision.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+                    transforms.ToTensor(),
+                    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
                 ]
             )
         elif dataset_name in ["MNIST"]:
-            transform = torchvision.transforms.ToTensor()
+            transform = transforms.ToTensor()
         
         # prepare raw training & test datasets
-        training_dataset = torchvision.datasets.__dict__[dataset_name](
+        training_dataset = datasets.__dict__[dataset_name](
             root=data_path,
             train=True,
             download=True,
             transform=transform
         )
-        test_dataset = torchvision.datasets.__dict__[dataset_name](
+        test_dataset = datasets.__dict__[dataset_name](
             root=data_path,
             train=False,
             download=True,
