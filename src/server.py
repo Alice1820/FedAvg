@@ -112,6 +112,7 @@ class Server(object):
         """Initialize each Client instance."""
         clients = []
         for k, dataset in tqdm(enumerate(local_datasets), leave=False):
+            # create clients
             client = Client(client_id=k, local_data=dataset, device=self.device)
             clients.append(client)
 
@@ -135,7 +136,7 @@ class Server(object):
             # send the global model to all clients before the very first and after the last federated round
             assert (self._round == 0) or (self._round == self.num_rounds)
 
-            for client in tqdm(self.clients, leave=False):
+            for client in tqdm(self.clients, leave=False): #
                 client.model = copy.deepcopy(self.model)
 
             message = f"[Round: {str(self._round).zfill(4)}] ...successfully transmitted models to all {str(self.num_clients)} clients!"

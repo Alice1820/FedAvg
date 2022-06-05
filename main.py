@@ -15,7 +15,7 @@ from src.utils import launch_tensor_board
 
 if __name__ == "__main__":
     # read configuration file
-    with open('./config.yaml') as c:
+    with open('./config/config.yaml') as c:
         configs = list(yaml.load_all(c, Loader=yaml.FullLoader))
     global_config = configs[0]["global_config"]
     data_config = configs[1]["data_config"]

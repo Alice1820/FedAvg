@@ -28,16 +28,28 @@ class Client(object):
         self.data = local_data
         self.device = device
         self.__model = None
-
+        self.__modelA = None
+        self.__modelB = None
+    
     @property
-    def model(self):
+    def modelA(self):
         """Local model getter for parameter aggregation."""
-        return self.__model
-
-    @model.setter
-    def model(self, model):
+        return self.__modelA
+    
+    @property
+    def modelB(self):
+        """Local model getter for parameter aggregation."""
+        return self.__modelB
+    
+    @modelA.setter
+    def modelA(self, modelA):
         """Local model setter for passing globally aggregated model parameters."""
-        self.__model = model
+        self.__modelA = modelA
+    
+    @modelB.setter
+    def modelB(self, modelB):
+        """Local model setter for passing globally aggregated model parameters."""
+        self.__modelB = modelB
 
     def __len__(self):
         """Return a total size of the client's local data."""

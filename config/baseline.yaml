@@ -1,0 +1,48 @@
+global_config:
+  seed: 5959
+  device: "cuda"
+  is_mp: True
+---
+data_config:
+  data_path: "./data/"
+  dataset_name: "NTU_RGBD_60"
+  num_shards: 200
+  iid: True
+  modals: ["RGB D", "RGB", "D"] # modalities combinations
+  nodes: [6, 6, 6] # number of nodes for each combination
+---
+fed_config:
+  C: 0.1
+  K: 25 # numbers of clients
+  R: 500
+  E: 10
+  B: 10 # batchsize
+  criterion: utils.singlem_fixmatch_loss
+  optimizer: torch.optim.SGD
+---
+optim_config:
+  lr: 0.01
+  momentum: 0.9
+---
+init_config:
+  init_type: "xavier"
+  init_gain: 1.0
+  gpu_ids: [0, 1, 2]
+---
+model_config: 
+  #name: TwoNN
+  #in_features: 784
+  #num_hiddens: 200
+  #num_classes: 10
+  
+  name: CNN
+  in_channels: 1
+  hidden_channels: 32
+  num_hiddens: 512
+  num_classes: 10
+---
+log_config:
+  log_path: "./log/"
+  log_name:  "baseline.log"
+  tb_port: 5252
+  tb_host: "0.0.0.0"
