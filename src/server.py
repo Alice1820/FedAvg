@@ -11,7 +11,9 @@ from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 from collections import OrderedDict
 
-from .models import *
+# backbones
+# from .models.models import *
+from .models.tsm import TSN
 from .utils import *
 from .client import Client
 
@@ -52,7 +54,8 @@ class Server(object):
         self._round = 0
         self.writer = writer
 
-        self.model = eval(model_config["name"])(**model_config)
+        self.models = []
+        self.model_config = model_config
         
         self.seed = global_config["seed"]
         self.device = global_config["device"]
@@ -80,11 +83,19 @@ class Server(object):
         # valid only before the very first round
         assert self._round == 0
 
-        # initialize weights of the model
-        torch.manual_seed(self.seed)
-        init_net(self.model, **self.init_config)
+        # config models
+        # assert number of modals and models
+        assert self.model_config['num_modals'] == len(self.model_config['modals']) == len(self.model_config['modals_config'])
+        # init every model in self.models
+        for modal_config in self.model_config['modals_config']:
+            model = eval(modal_config["name"])(**modal_config)
+            # initialize weights of the model
+            torch.manual_seed(self.seed)
+            init_net(model, **self.init_config)
+            self.models.append(model)
 
-        message = f"[Round: {str(self._round).zfill(4)}] ...successfully initialized model (# parameters: {str(sum(p.numel() for p in self.model.parameters()))})!"
+        message = f"[Round: {str(self._round).zfill(4)}] ...successfully initialized {self.model_config['num_modals']} models \
+            (# parameters: {[str(sum(p.numel() for p in model.parameters())) for model in self.models]})!"
         print(message); logging.info(message)
         del message; gc.collect()
 

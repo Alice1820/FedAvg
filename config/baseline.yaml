@@ -8,8 +8,8 @@ data_config:
   dataset_name: "NTU_RGBD_60"
   num_shards: 200
   iid: True
-  modals: ["RGB D", "RGB", "D"] # modalities combinations
-  nodes: [6, 6, 6] # number of nodes for each combination
+  modals: ["rgb", "depth"] # modalities combinations
+  nodes: [6, 6, 6] # number of nodes for each combination, [A, B], [A], [B]
 ---
 fed_config:
   C: 0.1
@@ -29,17 +29,21 @@ init_config:
   init_gain: 1.0
   gpu_ids: [0, 1, 2]
 ---
-model_config: 
-  #name: TwoNN
-  #in_features: 784
-  #num_hiddens: 200
-  #num_classes: 10
-  
-  name: CNN
-  in_channels: 1
-  hidden_channels: 32
-  num_hiddens: 512
-  num_classes: 10
+model_config:
+  num_modals: 2
+  modals: ["rgb", "depth"]
+  modals_config:
+    [
+    modal: "rgb"
+    name: TSN
+    in_channels: 3
+    num_classes: 60
+    ,
+    modal: "depth"
+    name: TSN
+    in_channels: 1
+    num_classes: 60
+    ]
 ---
 log_config:
   log_path: "./log/"
