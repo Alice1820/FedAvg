@@ -212,11 +212,19 @@ class NTU_X(Dataset):
                  vid_len=(8, 8)):
         # check subjects list is not empty
         assert len(subjects) != 0
-
+        
         # basename
         self.basename_rgb = os.path.join(root_dir, 'nturgbd_rgb/avi_310x256_30') 
-        self.basename_dep = os.path.join(root_dir, 'nturgbd_depth_masked/dep_310*256') 
+        self.basename_dep = os.path.join(root_dir, 'nturgbd_depth_masked/dep_310x256') 
     
+        if stage == 'train':
+            # subjects = [1, 4, 8, 13, 15, 16, 17, 18, 19, 25, 27, 28, 31, 34, 35, 38, 2, 5, 9, 14] # 20 subjects
+            self.subjects = subjects # 20 subjects
+        elif stage == 'test':
+            self.subjects = [3, 6, 7, 10, 11, 12, 20, 21, 22, 23, 24, 26, 29, 30, 32, 33, 36, 37, 39, 40]
+        else:
+            raise Exception('wrong stage: ' + stage)
+
         self.vid_len = vid_len # (8, 8)
         self.subjects = subjects
         self.rgb_list = []
@@ -265,6 +273,7 @@ class NTU_U(NTU_X):
 
     """
     def __init__(self, root_dir='/data0/xfzhang/data/NTU_RGBD_60',  # /data0/xifan/NTU_RGBD_60
+                 stage='train',
                  subjects=[],
                  temTransform=None,
                  spaTransform_w=None,
@@ -272,8 +281,9 @@ class NTU_U(NTU_X):
                  depTransform_w=None,
                  depTransform_s=None,
                  vid_len=(8, 8)):
-        super(NTU_X, self).__init__(root_dir=root_dir, 
-                                    subjects=subjects, 
+        super(NTU_U, self).__init__(root_dir=root_dir, 
+                                    stage=stage, 
+                                    subjects=subjects,
                                     temTransform=temTransform, 
                                     spaTransform=spaTransform_w, 
                                     depTransform=depTransform_w
@@ -309,19 +319,19 @@ class NTU_U(NTU_X):
         samples['dep_s'] = self.depTransform_s(sample['dep'])
         # print (sample['dep_s'].size(), 'dep_s')
      
-        return samples['rgb_w'], samples['rgb_s'], samples['dep_w'], samples['dep_s']
+        return samples['rgb_w'], samples['rgb_s'], samples['dep_w'], samples['dep_s'], label
 
 
-def get_ntu_rgbd(args):
+def get_ntu_rgbd_train(root_dir='/data0/xfzhang/data/NTU_RGBD_60/', num_segments=8, subjects=[]):
     # RGB
-    spaTransform_unlabeled_w = transforms.Compose([
+    spaTransform_w = transforms.Compose([
             # regular augmentation
             video_transforms.RandomHorizontalFlip(),
             video_transforms.RandomCrop((224, 224)),
             volume_transforms.ClipToTensor(div_255=True),
             video_transforms.Normalize(mean=imagenet_mean, std=imagenet_std)
             ])
-    spaTransform_unlabeled_s = transforms.Compose([
+    spaTransform_s = transforms.Compose([
             # regular augmentation
             video_transforms.RandomHorizontalFlip(),
             video_transforms.RandomCrop((224, 224)),
@@ -329,25 +339,9 @@ def get_ntu_rgbd(args):
             volume_transforms.ClipToTensor(div_255=True),
             video_transforms.Normalize(mean=imagenet_mean, std=imagenet_std)
             ])
-    spaTransform_labeled = transforms.Compose([
-        # extra augmentation
-        # video_transforms.RandomGrayscale(),
-        # video_transforms.RandomRotation(30),
-        # video_transforms.ColorJitter(0.2, 0.2, 0.2),
-        # regular augmentation
-        video_transforms.RandomHorizontalFlip(),
-        video_transforms.RandomCrop((224, 224)),
-        volume_transforms.ClipToTensor(div_255=True),
-        video_transforms.Normalize(mean=imagenet_mean, std=imagenet_std)
-    ])
-    spaTransform_val = transforms.Compose([
-        video_transforms.CenterCrop((224, 224)),
-        volume_transforms.ClipToTensor(div_255=True),
-        video_transforms.Normalize(mean=imagenet_mean, std=imagenet_std)
-    ])
 
     # Depth
-    depTransform_unlabeled_w = transforms.Compose([
+    depTransform_w = transforms.Compose([
             # regular augmentation
             video_transforms.RandomHorizontalFlip(),
             video_transforms.RandomCrop((224, 224)),
@@ -355,7 +349,7 @@ def get_ntu_rgbd(args):
             video_transforms.Normalize(mean=dep_mean, std=dep_std),
             ])
 
-    depTransform_unlabeled_s = transforms.Compose([
+    depTransform_s = transforms.Compose([
             # extra augmentation
             video_transforms.RandomRotation(30),
             # regular augmentation
@@ -364,34 +358,49 @@ def get_ntu_rgbd(args):
             volume_transforms.ClipToTensor(channel_nb=1, div_255=False),
             video_transforms.Normalize(mean=dep_mean, std=dep_std),
             ])
-    depTransform_labeled = transforms.Compose([
-        # extra augmentation
-        # regular augmentation
-        video_transforms.RandomHorizontalFlip(),
-        video_transforms.RandomCrop((224, 224)),
-        volume_transforms.ClipToTensor(channel_nb=1, div_255=False),
-        video_transforms.Normalize(mean=dep_mean, std=dep_std)
+
+    temTransform_labeled = transforms.Compose([TemAugCrop(), TemNormalizeLen((num_segments, num_segments))])
+    
+    train_dataset = NTU_U(root_dir=root_dir, stage='train', subjects=subjects, 
+                        temTransform=temTransform_labeled, 
+                        spaTransform_w=spaTransform_w, spaTransform_s=spaTransform_s, 
+                        depTransform_w=depTransform_w, depTransform_s=depTransform_s)    
+
+    print('number of train: {}'.format(len(train_dataset)))
+
+    return train_dataset
+
+
+def get_ntu_rgbd_test(root_dir='/data0/xfzhang/data/NTU_RGBD_60/', num_segments=8, subjects=[]):
+    # RGB
+    spaTransform_val = transforms.Compose([
+        video_transforms.CenterCrop((224, 224)),
+        volume_transforms.ClipToTensor(div_255=True),
+        video_transforms.Normalize(mean=imagenet_mean, std=imagenet_std)
     ])
+
+    # Depth
     depTransform_val = transforms.Compose([
         video_transforms.CenterCrop((224, 224)),
         volume_transforms.ClipToTensor(channel_nb=1, div_255=False),
         video_transforms.Normalize(mean=dep_mean, std=dep_std)
     ])
 
-    temTransform_labeled = transforms.Compose([TemAugCrop(), TemNormalizeLen((args.num_segments, args.num_segments))])
-    temTransform_val = transforms.Compose([TemCenterCrop(), TemNormalizeLen((args.num_segments, args.num_segments))])
+    temTransform_val = transforms.Compose([TemCenterCrop(), TemNormalizeLen((num_segments, num_segments))])
+    
+    testTransform_config = {"temTransform": temTransform_val, 
+                            "spaTransform_w": spaTransform_val, 
+                            "spaTransform_s": spaTransform_val, 
+                            "depTransform_w": depTransform_val, 
+                            "depTransform_s": depTransform_val}
+    test_dataset = NTU_U(root_dir=root_dir, stage='test', subjects=subjects, 
+                        temTransform=temTransform_val, 
+                        spaTransform_w=spaTransform_val, spaTransform_s=spaTransform_val, 
+                        depTransform_w=depTransform_val, depTransform_s=depTransform_val)
 
-    train_labeled_dataset = NTU_x(root_dir=args.data_folder, stage=args.dataset, temTransform=temTransform_labeled, spaTransform=spaTransform_labeled, depTransform=depTransform_labeled)
-    train_unlabeled_dataset = NTU_u(root_dir=args.data_folder, stage='train', temTransform=temTransform_labeled, spaTransform_w=spaTransform_unlabeled_w, spaTransform_s=spaTransform_unlabeled_s, depTransform_w=depTransform_unlabeled_w, depTransform_s=depTransform_unlabeled_s)    
-    eval_dataset = NTU_x(root_dir=args.data_folder, stage='dev', temTransform=temTransform_val, spaTransform=spaTransform_val, depTransform=depTransform_val)
-    test_dataset = NTU_x(root_dir=args.data_folder, stage='test', temTransform=temTransform_val, spaTransform=spaTransform_val, depTransform=depTransform_val)
-
-    print('number of labeled train: {}'.format(len(train_labeled_dataset)))
-    print('number of unlabeled train: {}'.format(len(train_unlabeled_dataset)))
-    print('number of val: {}'.format(len(eval_dataset)))
     print('number of test: {}'.format(len(test_dataset)))
 
-    return train_labeled_dataset, train_unlabeled_dataset, eval_dataset, test_dataset
+    return test_dataset
 
 
 class vidTransformFixMatch(object):

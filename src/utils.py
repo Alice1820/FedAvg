@@ -8,7 +8,12 @@ import torch.nn.init as init
 import torch.nn.functional as F
 
 from torch.utils.data import Dataset, TensorDataset, ConcatDataset
-from torchvision import datasets, transforms
+import torchvision
+from torchvision import transforms
+
+from sklearn.utils import shuffle
+
+from .datasets.NTU_RGBD import NTU_X, NTU_U, get_ntu_rgbd_train, get_ntu_rgbd_test
 
 logger = logging.getLogger(__name__)
 
@@ -102,11 +107,30 @@ class CustomTensorDataset(Dataset):
     def __len__(self):
         return self.tensors[0].size(0)
 
+def create_ntu_datasets(data_path, num_clients):
+    train_subjects = [1, 4, 8, 13, 15, 16, 17, 18, 19, 25, 27, 28, 31, 34, 35, 38, 2, 5, 9, 14] # 20 subjects
+    test_subjects = [3, 6, 7, 10, 11, 12, 20, 21, 22, 23, 24, 26, 29, 30, 32, 33, 36, 37, 39, 40] # 20 subjects
+
+    test_dataset = get_ntu_rgbd_test(root_dir=data_path, subjects=test_subjects)
+    # naturally non-IID
+    # sort data by subjects
+    assert len(train_subjects) % num_clients == 0 # train_subjects can be 
+    shards = len(train_subjects) // num_clients
+    # TODO: seed
+    train_subjects = shuffle(train_subjects)
+    split_subjects = [train_subjects[x:x+shards] for x in range(0, len(train_subjects), shards)]
+    # print(split_subjects)
+    local_datasets = [
+            get_ntu_rgbd_train(root_dir=data_path, subjects=split_list)
+            for split_list in split_subjects
+        ]
+    return local_datasets, test_dataset
+
 def create_datasets(data_path, dataset_name, num_clients, num_shards, iid):
     """Split the whole dataset in IID or non-IID manner for distributing to clients."""
     dataset_name = dataset_name.upper()
     # get dataset from torchvision.datasets if exists
-    if hasattr(datasets, dataset_name):
+    if hasattr(torchvision.datasets, dataset_name):
         # set transformation differently per dataset
         if dataset_name in ["CIFAR10"]:
             transform = transforms.Compose(
@@ -119,18 +143,20 @@ def create_datasets(data_path, dataset_name, num_clients, num_shards, iid):
             transform = transforms.ToTensor()
         
         # prepare raw training & test datasets
-        training_dataset = datasets.__dict__[dataset_name](
+        training_dataset = torchvision.datasets.__dict__[dataset_name](
             root=data_path,
             train=True,
             download=True,
             transform=transform
         )
-        test_dataset = datasets.__dict__[dataset_name](
+        test_dataset = torchvision.datasets.__dict__[dataset_name](
             root=data_path,
             train=False,
             download=True,
             transform=transform
         )
+    elif dataset_name == "NTU_RGBD":
+        return create_ntu_datasets(data_path, num_clients)
     else:
         # dataset not found exception
         error_message = f"...dataset \"{dataset_name}\" is not supported or cannot be found in TorchVision Datasets!"

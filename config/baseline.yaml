@@ -5,7 +5,7 @@ global_config:
 ---
 data_config:
   data_path: "/data0/xfzhang/data/NTU_RGBD_60/" # root_dir
-  dataset_name: "NTU_RGBD_60"
+  dataset_name: "NTU_RGBD"
   modals: ["RGB", "D"]
   num_shards: 200
   iid: True
@@ -25,7 +25,7 @@ clients_config:
 ---
 fed_config:
   C: 0.1
-  K: 25 # numbers of clients
+  K: 20 # numbers of clients
   R: 500
   E: 10
   B: 10 # batchsize
