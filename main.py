@@ -15,15 +15,19 @@ from src.utils import launch_tensor_board
 
 if __name__ == "__main__":
     # read configuration file
-    with open('./config/config.yaml') as c:
+    with open('./config/baseline.yaml') as c:
         configs = list(yaml.load_all(c, Loader=yaml.FullLoader))
     global_config = configs[0]["global_config"]
     data_config = configs[1]["data_config"]
-    fed_config = configs[2]["fed_config"]
-    optim_config = configs[3]["optim_config"]
-    init_config = configs[4]["init_config"]
-    model_config = configs[5]["model_config"]
-    log_config = configs[6]["log_config"]
+    # multimodal FL 
+    server_config = configs[2]["server_config"] 
+    clients_config = configs[3]["clients_config"]
+
+    fed_config = configs[4]["fed_config"]
+    optim_config = configs[5]["optim_config"]
+    init_config = configs[6]["init_config"]
+    model_config = configs[7]["model_config"]
+    log_config = configs[8]["log_config"]
    
     # modify log_path to contain current time
     log_config["log_path"] = os.path.join(log_config["log_path"], str(datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S")))
@@ -48,12 +52,14 @@ if __name__ == "__main__":
     message = "\n[WELCOME] Unfolding configurations...!"
     print(message); logging.info(message)
 
-    for config in configs:
-        print(config); logging.info(config)
-    print()
+    # for config in configs:
+    #     print(config); logging.info(config)
+    # print()
 
     # initialize federated learning 
-    central_server = Server(writer, model_config, global_config, data_config, init_config, fed_config, optim_config)
+    central_server = Server(writer, model_config=model_config, global_config=global_config, data_config=data_config, 
+                            server_config=server_config, clients_config=clients_config,
+                            init_config=init_config, fed_config=fed_config, optim_config=optim_config)
     central_server.setup()
 
     # do federated learning

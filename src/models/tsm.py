@@ -409,15 +409,16 @@ class ConsensusModule(torch.nn.Module):
         return SegmentConsensus(self.consensus_type, self.dim)(input)
 
 class TSN(nn.Module):
-    def __init__(self, num_class=120, num_segments=8, modality='RGB',
+    def __init__(self, num_class=60, num_segments=8, modal='RGB',
                  base_model='resnet18', new_length=None,
                  consensus_type='avg', before_softmax=True,
                  dropout=0.8, img_feature_dim=256,
                  crop_num=1, partial_bn=True, print_spec=True, pretrain='imagenet',
                  is_shift=False, shift_div=8, shift_place='blockres', fc_lr5=False,
-                 temporal_pool=False, non_local=False):
+                 temporal_pool=False, non_local=False,
+                 name='TSN'):
         super(TSN, self).__init__()
-        self.modality = modality
+        self.modality = modal
         self.num_segments = num_segments
         self.reshape = True
         self.before_softmax = before_softmax
@@ -439,7 +440,7 @@ class TSN(nn.Module):
             raise ValueError("Only avg consensus can be used after Softmax")
 
         if new_length is None:
-            self.new_length = 1 if modality == "RGB" else 5
+            self.new_length = 1 if self.modality in ["RGB", "D"] else 5
         else:
             self.new_length = new_length
         if print_spec:
@@ -666,7 +667,7 @@ class TSN(nn.Module):
         # Changing temporal and channel dim to fit the inflated resnet input requirements
         B, T, W, H, C = input.size()
         if not no_reshape:
-            sample_len = (3 if self.modality == "RGB" else 2) * self.new_length
+            sample_len = (3 if self.modality in ["RGB", "Depth"] else 2) * self.new_length
 
             if self.modality == 'RGBDiff':
                 sample_len = 3 * self.new_length
@@ -696,7 +697,7 @@ class TSN(nn.Module):
             return cls_out.squeeze(1), feat_out.squeeze(1) # feature, logits 128, 120
 
     def _get_diff(self, input, keep_rgb=False):
-        input_c = 3 if self.modality in ["RGB", "RGBDiff"] else 2
+        input_c = 3 if self.modality in ["RGB", "D", "RGBDiff"] else 2
         input_view = input.view((-1, self.num_segments, self.new_length + 1, input_c,) + input.size()[2:])
         if keep_rgb:
             new_data = input_view.clone()

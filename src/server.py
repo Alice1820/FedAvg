@@ -53,7 +53,9 @@ class Server(object):
         optimizer: torch.optim instance for updating parameters.
         optim_config: Kwargs provided for optimizer.
     """
-    def __init__(self, writer, model_config={}, global_config={}, data_config={}, init_config={}, fed_config={}, optim_config={}):
+    def __init__(self, writer, model_config={}, global_config={}, data_config={}, 
+                server_config={}, clients_config={},
+                init_config={}, fed_config={}, optim_config={}):
         self.clients = None
         self._round = 0
         self.writer = writer
@@ -89,15 +91,18 @@ class Server(object):
 
         # config models
         # assert number of modals and models
-        assert self.model_config['num_modals'] == len(self.model_config['modals']) == len(self.model_config['modals_config'])
+        assert self.model_config['num_modals'] == len(self.model_config["modals"]) == len(self.model_config["backbone_config"])
+        for modal, backbone_config in zip(self.model_config["modals"], self.model_config["backbone_config"]):
+            assert modal == backbone_config["modal"]
         # init every model in self.models
-        for idx, modal_config in enumerate(self.model_config['backbone_config']): # backbone_config is a list of dictionaries
-            print (modal_config)
-            model = eval(modal_config["name"])(**modal_config)
+        for idx, backbone_config in enumerate(self.model_config['backbone_config']): # backbone_config is a list of dictionaries
+            model = eval(backbone_config["name"])(**backbone_config)
             # initialize weights of the model
             torch.manual_seed(self.seed)
             init_net(model, **self.init_config)
             self.models.append(model)
+            message = f"[Round: {str(self._round).zfill(4)}] ...successfully initialized backbone {backbone_config}"
+            print (message); gc.collect()
 
         message = f"[Round: {str(self._round).zfill(4)}] ...successfully initialized {self.model_config['num_modals']} models \
             (# parameters: {[str(sum(p.numel() for p in model.parameters())) for model in self.models]})!"
