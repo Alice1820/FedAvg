@@ -52,9 +52,9 @@ if __name__ == "__main__":
     message = "\n[WELCOME] Unfolding configurations...!"
     print(message); logging.info(message)
 
-    # for config in configs:
-    #     print(config); logging.info(config)
-    # print()
+    for config in configs:
+        print(config); logging.info(config)
+    print()
 
     # initialize federated learning 
     central_server = Server(writer, model_config=model_config, global_config=global_config, data_config=data_config, 

@@ -319,7 +319,7 @@ class NTU_U(NTU_X):
         samples['dep_s'] = self.depTransform_s(sample['dep'])
         # print (sample['dep_s'].size(), 'dep_s')
      
-        return samples['rgb_w'], samples['rgb_s'], samples['dep_w'], samples['dep_s'], label
+        return [samples['rgb_w'], samples['rgb_s'], samples['dep_w'], samples['dep_s']], label - 1
 
 
 def get_ntu_rgbd_train(root_dir='/data0/xfzhang/data/NTU_RGBD_60/', num_segments=8, subjects=[]):
@@ -387,12 +387,7 @@ def get_ntu_rgbd_test(root_dir='/data0/xfzhang/data/NTU_RGBD_60/', num_segments=
     ])
 
     temTransform_val = transforms.Compose([TemCenterCrop(), TemNormalizeLen((num_segments, num_segments))])
-    
-    testTransform_config = {"temTransform": temTransform_val, 
-                            "spaTransform_w": spaTransform_val, 
-                            "spaTransform_s": spaTransform_val, 
-                            "depTransform_w": depTransform_val, 
-                            "depTransform_s": depTransform_val}
+
     test_dataset = NTU_U(root_dir=root_dir, stage='test', subjects=subjects, 
                         temTransform=temTransform_val, 
                         spaTransform_w=spaTransform_val, spaTransform_s=spaTransform_val, 

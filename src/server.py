@@ -1,5 +1,6 @@
 import copy
 import gc
+import itertools
 import logging
 from operator import mod
 
@@ -99,7 +100,7 @@ class Server(object):
             model = eval(backbone_config["name"])(**backbone_config)
             # initialize weights of the model
             torch.manual_seed(self.seed)
-            init_net(model, **self.init_config)
+            init_single_net(model, **self.init_config)
             self.models.append(model)
             message = f"[Round: {str(self._round).zfill(4)}] ...successfully initialized backbone {backbone_config}"
             print (message); gc.collect()
@@ -110,6 +111,7 @@ class Server(object):
         del message; gc.collect()
 
         # split local dataset for each client
+        # different num_local_epochs for every client
         local_datasets, test_dataset = create_datasets(self.data_path, self.dataset_name, self.num_clients, self.num_shards, self.iid)
         
         # assign dataset to each client
@@ -117,7 +119,7 @@ class Server(object):
 
         # prepare hold-out dataset for evaluation
         self.data = test_dataset
-        self.dataloader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False)
+        self.dataloader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=8)
         
         # configure detailed settings for client upate and 
         self.setup_clients(
@@ -133,7 +135,7 @@ class Server(object):
         """Initialize each Client instance."""
         clients = []
         for k, dataset in tqdm(enumerate(local_datasets), leave=False):
-            # create clients
+            # ***create clients
             client = Client(client_id=k, local_data=dataset, device=self.device)
             clients.append(client)
 
@@ -159,7 +161,11 @@ class Server(object):
 
             for client in tqdm(self.clients, leave=False): #
                 client.models = copy.deepcopy(self.models)
+                # client.models = [nn.DataParallel(_model) for _model in client.models]
 
+            # # move all models to cpu
+            # for _model in self.models:
+            #     _model.to("cpu")
             message = f"[Round: {str(self._round).zfill(4)}] ...successfully transmitted models to all {str(self.num_clients)} clients!"
             print(message); logging.info(message)
             del message; gc.collect()
@@ -167,9 +173,12 @@ class Server(object):
             # send the global model to selected clients
             assert self._round != 0
 
-            for idx in tqdm(sampled_client_indices, leave=False):
+            for k, idx in tqdm(enumerate(sampled_client_indices), leave=False):
                 self.clients[idx].models = copy.deepcopy(self.models)
-            
+                # client.models = [nn.DataParallel(_model) for _model in client.models]
+            # # move all models to cpu
+            # for _model in self.models:
+            #     _model.to("cpu")
             message = f"[Round: {str(self._round).zfill(4)}] ...successfully transmitted models to {str(len(sampled_client_indices))} selected clients!"
             print(message); logging.info(message)
             del message; gc.collect()
@@ -206,6 +215,7 @@ class Server(object):
     
     def mp_update_selected_clients(self, selected_index):
         """Multiprocessing-applied version of "update_selected_clients" method."""
+        # two configs
         # update selected clients
         message = f"[Round: {str(self._round).zfill(4)}] Start updating selected client {str(self.clients[selected_index].id).zfill(4)}...!"
         print(message, flush=True); logging.info(message)
@@ -231,7 +241,9 @@ class Server(object):
             averaged_weights = OrderedDict()
             for it, idx in tqdm(enumerate(sampled_client_indices), leave=False):
                 # print ("check length of client models", len(self.clients[idx].models)) # 2
+                # parallel training
                 local_weights = self.clients[idx].models[model_index].state_dict()
+                # local_weights = self.clients[idx].models[model_index].module.state_dict()
                 for key in _model.state_dict().keys():
                     if it == 0:
                         averaged_weights[key] = coefficients[it] * local_weights[key]
@@ -265,7 +277,9 @@ class Server(object):
         """Do federated training."""
         # select pre-defined fraction of clients randomly
         sampled_client_indices = self.sample_clients()
-
+        displays = [False for _ in sampled_client_indices]
+        displays[0] = True
+        map_configs = list(itertools.product(sampled_client_indices, displays))
         # send global model to the selected clients
         self.transmit_model(sampled_client_indices)
 
@@ -273,6 +287,7 @@ class Server(object):
         if self.mp_flag:
             with pool.ThreadPool(processes=cpu_count() - 1) as workhorse:
                 selected_total_size = workhorse.map(self.mp_update_selected_clients, sampled_client_indices)
+                # selected_total_size = workhorse.map(self.mp_update_selected_clients, map_configs)
             selected_total_size = sum(selected_total_size)
         else:
             selected_total_size = self.update_selected_clients(sampled_client_indices)
@@ -302,15 +317,17 @@ class Server(object):
 
         test_losses, corrects = [0 for _ in self.models], [0 for _ in self.models]
         with torch.no_grad():
-            for data, labels in self.dataloader:
-                data, labels = data.float().to(self.device), labels.long().to(self.device)
+            for inputs, labels in tqdm(self.dataloader):
+                modala_w, modala_s, modalb_w, modalb_s = inputs
+                labels = labels.long().to(self.device)
+                data = [modala_w.float().to(self.device), modalb_w.float().to(self.device)]
                 # foreward pass through all models
-                for model_idx, _model in enumerate(self.models):
-                    outputs = _model(data)
-                    test_losses[model_idx] += eval(self.criterion)()(outputs, labels).item()
+                for idx, _model in enumerate(self.models):
+                    outputs = _model(data[idx])
+                    test_losses[idx] += eval(self.criterion)()(outputs, labels).item()
                 
                     predicted = outputs.argmax(dim=1, keepdim=True)
-                    corrects[model_idx] += predicted.eq(labels.view_as(predicted)).sum().item()
+                    corrects[idx] += predicted.eq(labels.view_as(predicted)).sum().item()
                 
                 if self.device == "cuda": torch.cuda.empty_cache()
         # move all models to cpu
@@ -348,6 +365,7 @@ class Server(object):
                 
                 message = f"[Round: {str(self._round).zfill(4)}] Evaluate global model's performance...!\
                     \n\t[Server] ...finished evaluation!\
+                    \n\t=> Modal: {model_idx}\
                     \n\t=> Loss: {test_loss[model_idx]:.4f}\
                     \n\t=> Accuracy: {100. * test_accuracy[model_idx]:.2f}%\n"            
                 print(message); logging.info(message)

@@ -6,16 +6,16 @@ global_config:
 data_config:
   data_path: "/data0/xfzhang/data/NTU_RGBD_60/" # root_dir
   dataset_name: "NTU_RGBD"
-  modals: ["RGB", "D"]
+  modals: ["RGB", "Depth"]
   num_shards: 200
   iid: True
 ---
 server_config:
-  modals: ["RGB", "D"]
+  modals: ["RGB", "Depth"]
   learn_strategy: "X" # X - supervised, U -unsupervised
 ---
 clients_config:
-  modals: ["RGB", "D"]
+  modals: ["RGB", "Depth"]
   clients_modals: # list of list, check length of clients_modals == clients_learn_strategy == clients_node
     - ["RGB", "D"]
     - ["RGB"]
@@ -24,26 +24,26 @@ clients_config:
   clients_nodes: [6, 6, 6] # number of nodes for each combination, [A, B], [A], [B]
 ---
 fed_config:
-  C: 0.1
-  K: 20 # numbers of clients
+  C: 0.2 # fraction
+  K: 10 # numbers of clients
   R: 500
-  E: 10
-  B: 10 # batchsize
-  criterion: utils.singlem_fixmatch_loss
+  E: 1 # epochs
+  B: 24 # batchsize
+  criterion: torch.nn.CrossEntropyLoss
   optimizer: torch.optim.SGD
 ---
 optim_config:
-  lr: 0.01
+  lr: 0.001
   momentum: 0.9
 ---
 init_config:
   init_type: "xavier"
   init_gain: 1.0
-  gpu_ids: [0, 1, 2]
+  gpu_ids: [0, 1]
 ---
 model_config: 
   num_modals: 2
-  modals: ["RGB", "D"]
+  modals: ["RGB", "Depth"]
   backbone_config: # list of dictionary
     -
         modal: "RGB"
@@ -51,9 +51,9 @@ model_config:
         num_class: 60
         img_feature_dim: 256
     -   
-        modal: "D"
+        modal: "Depth"
         name: TSN
-        num_class: 120
+        num_class: 60
         img_feature_dim: 256
 ---
 log_config:

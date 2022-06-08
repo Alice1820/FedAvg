@@ -64,10 +64,6 @@ def init_weights(model, init_type, init_gain):
             init.constant_(m.bias.data, 0.0)   
     model.apply(init_func)
 
-def init_net(model, init_type, init_gain, gpu_ids):
-    """Function for initializing all network weights"""
-    pass
-
 def init_single_net(model, init_type, init_gain, gpu_ids):
     """Function for initializing single network weights.
     
@@ -84,7 +80,7 @@ def init_single_net(model, init_type, init_gain, gpu_ids):
         assert(torch.cuda.is_available())
         model.to(gpu_ids[0])
         model = nn.DataParallel(model, gpu_ids)
-    init_weights(model, init_type, init_gain)
+    # init_weights(model, init_type, init_gain)
     return model
 
 #################
