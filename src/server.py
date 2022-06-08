@@ -1,6 +1,7 @@
 import copy
 import gc
 import logging
+from operator import mod
 
 import numpy as np
 import torch
@@ -12,10 +13,13 @@ from tqdm.auto import tqdm
 from collections import OrderedDict
 
 # backbones
-# from .models.models import *
+from .models.models import *
 from .models.tsm import TSN
 from .utils import *
 from .client import Client
+
+# import sys
+# sys.path.append("..")
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +91,8 @@ class Server(object):
         # assert number of modals and models
         assert self.model_config['num_modals'] == len(self.model_config['modals']) == len(self.model_config['modals_config'])
         # init every model in self.models
-        for modal_config in self.model_config['modals_config']:
+        for idx, modal_config in enumerate(self.model_config['modals_config']):
+            print (modal_config)
             model = eval(modal_config["name"])(**modal_config)
             # initialize weights of the model
             torch.manual_seed(self.seed)
@@ -148,7 +153,7 @@ class Server(object):
             assert (self._round == 0) or (self._round == self.num_rounds)
 
             for client in tqdm(self.clients, leave=False): #
-                client.model = copy.deepcopy(self.model)
+                client.models = copy.deepcopy(self.models)
 
             message = f"[Round: {str(self._round).zfill(4)}] ...successfully transmitted models to all {str(self.num_clients)} clients!"
             print(message); logging.info(message)
@@ -158,7 +163,7 @@ class Server(object):
             assert self._round != 0
 
             for idx in tqdm(sampled_client_indices, leave=False):
-                self.clients[idx].model = copy.deepcopy(self.model)
+                self.clients[idx].models = copy.deepcopy(self.models)
             
             message = f"[Round: {str(self._round).zfill(4)}] ...successfully transmitted models to {str(len(sampled_client_indices))} selected clients!"
             print(message); logging.info(message)
@@ -216,15 +221,18 @@ class Server(object):
         print(message); logging.info(message)
         del message; gc.collect()
 
-        averaged_weights = OrderedDict()
-        for it, idx in tqdm(enumerate(sampled_client_indices), leave=False):
-            local_weights = self.clients[idx].model.state_dict()
-            for key in self.model.state_dict().keys():
-                if it == 0:
-                    averaged_weights[key] = coefficients[it] * local_weights[key]
-                else:
-                    averaged_weights[key] += coefficients[it] * local_weights[key]
-        self.model.load_state_dict(averaged_weights)
+        # iterate over all models
+        for model_index, _model in enumerate(self.models):
+            averaged_weights = OrderedDict()
+            for it, idx in tqdm(enumerate(sampled_client_indices), leave=False):
+                print ("check length of client models", len(self.clients[idx].models))
+                local_weights = self.clients[idx].models[model_index].state_dict()
+                for key in _model.state_dict().keys():
+                    if it == 0:
+                        averaged_weights[key] = coefficients[it] * local_weights[key]
+                    else:
+                        averaged_weights[key] += coefficients[it] * local_weights[key]
+            _model.load_state_dict(averaged_weights)
 
         message = f"[Round: {str(self._round).zfill(4)}] ...updated weights of {len(sampled_client_indices)} clients are successfully averaged!"
         print(message); logging.info(message)
@@ -283,25 +291,31 @@ class Server(object):
         
     def evaluate_global_model(self):
         """Evaluate the global model using the global holdout dataset (self.data)."""
-        self.model.eval()
-        self.model.to(self.device)
+        for _model in self.models:
+            _model.eval()
+            _model.to(self.device)
 
-        test_loss, correct = 0, 0
+        test_losses, corrects = [0 for _ in self.models], [0 for _ in self.models]
         with torch.no_grad():
             for data, labels in self.dataloader:
                 data, labels = data.float().to(self.device), labels.long().to(self.device)
-                outputs = self.model(data)
-                test_loss += eval(self.criterion)()(outputs, labels).item()
+                # foreward pass through all models
+                for model_idx, _model in enumerate(self.models):
+                    outputs = _model(data)
+                    test_losses[model_idx] += eval(self.criterion)()(outputs, labels).item()
                 
-                predicted = outputs.argmax(dim=1, keepdim=True)
-                correct += predicted.eq(labels.view_as(predicted)).sum().item()
+                    predicted = outputs.argmax(dim=1, keepdim=True)
+                    corrects[model_idx] += predicted.eq(labels.view_as(predicted)).sum().item()
                 
                 if self.device == "cuda": torch.cuda.empty_cache()
-        self.model.to("cpu")
+        # move all models to cpu
+        for _model in self.models:
+            _model.to("cpu")
 
-        test_loss = test_loss / len(self.dataloader)
-        test_accuracy = correct / len(self.data)
-        return test_loss, test_accuracy
+        test_losses = [test_loss / len(self.dataloader) for test_loss in test_losses]
+        test_accuracys = [correct / len(self.data) for correct in corrects]
+
+        return test_losses, test_accuracys
 
     def fit(self):
         """Execute the whole process of the federated learning."""
@@ -315,21 +329,22 @@ class Server(object):
             self.results['loss'].append(test_loss)
             self.results['accuracy'].append(test_accuracy)
 
-            self.writer.add_scalars(
-                'Loss',
-                {f"[{self.dataset_name}]_{self.model.name} C_{self.fraction}, E_{self.local_epochs}, B_{self.batch_size}, IID_{self.iid}": test_loss},
-                self._round
-                )
-            self.writer.add_scalars(
-                'Accuracy', 
-                {f"[{self.dataset_name}]_{self.model.name} C_{self.fraction}, E_{self.local_epochs}, B_{self.batch_size}, IID_{self.iid}": test_accuracy},
-                self._round
-                )
-
-            message = f"[Round: {str(self._round).zfill(4)}] Evaluate global model's performance...!\
-                \n\t[Server] ...finished evaluation!\
-                \n\t=> Loss: {test_loss:.4f}\
-                \n\t=> Accuracy: {100. * test_accuracy:.2f}%\n"            
-            print(message); logging.info(message)
-            del message; gc.collect()
+            for model_idx, _model in enumerate(self.models):
+                self.writer.add_scalars(
+                    'Loss',
+                    {f"[{self.dataset_name}]_{_model.name} C_{self.fraction}, E_{self.local_epochs}, B_{self.batch_size}, IID_{self.iid}": test_loss[model_idx]},
+                    self._round
+                    )
+                self.writer.add_scalars(
+                    'Accuracy', 
+                    {f"[{self.dataset_name}]_{_model.name} C_{self.fraction}, E_{self.local_epochs}, B_{self.batch_size}, IID_{self.iid}": test_accuracy[model_idx]},
+                    self._round
+                    )
+                
+                message = f"[Round: {str(self._round).zfill(4)}] Evaluate global model's performance...!\
+                    \n\t[Server] ...finished evaluation!\
+                    \n\t=> Loss: {test_loss[model_idx]:.4f}\
+                    \n\t=> Accuracy: {100. * test_accuracy[model_idx]:.2f}%\n"            
+                print(message); logging.info(message)
+                del message; gc.collect()
         self.transmit_model()

@@ -1,3 +1,4 @@
+import copy
 import gc
 import pickle
 import logging
@@ -38,8 +39,10 @@ class Client(object):
     def models(self, models):
         """Local model setter for passing globally aggregated model parameters."""
         # iterate over models
-        for __model, model in zip(self.__models, models):
-            self.__model = model
+        # for __model, model in zip(self.__models, models):
+            # __model = model
+        self.__models = copy.deepcopy(models)
+
 
     def __len__(self):
         """Return a total size of the client's local data."""
@@ -55,49 +58,67 @@ class Client(object):
 
     def client_update(self):
         """Update local model using local dataset."""
-        self.model.train()
-        self.model.to(self.device)
-
-        optimizer = eval(self.optimizer)(self.model.parameters(), **self.optim_config)
+        optimizers = []
+        for _model in self.models:
+            _model.train()
+            _model.to(self.device)
+            optimizers.append(eval(self.optimizer)(_model.parameters(), **self.optim_config))
+        
+        # training
         for e in range(self.local_epoch):
             for data, labels in self.dataloader:
                 data, labels = data.float().to(self.device), labels.long().to(self.device)
-  
-                optimizer.zero_grad()
-                outputs = self.model(data)
-                loss = eval(self.criterion)()(outputs, labels)
+                # iterate over every model with same data
+                for _optimizer, _model in zip(optimizers, self.models):
+                    _optimizer.zero_grad()
+                    outputs = _model(data)
+                    loss = eval(self.criterion)()(outputs, labels)
 
-                loss.backward()
-                optimizer.step() 
+                    loss.backward()
+                    _optimizer.step() 
 
-                if self.device == "cuda": torch.cuda.empty_cache()               
-        self.model.to("cpu")
+                if self.device == "cuda": torch.cuda.empty_cache()
+        # move all models to cpu
+        for _model in self.models:
+            _model.to("cpu")
 
     def client_evaluate(self):
         """Evaluate local model using local dataset (same as training set for convenience)."""
-        self.model.eval()
-        self.model.to(self.device)
+        for _model in self.models:
+            _model.eval()
+            _model.to(self.device)
 
-        test_loss, correct = 0, 0
+        test_losses, corrects = [0 for _ in self.models], [0 for _ in self.models]
         with torch.no_grad():
             for data, labels in self.dataloader:
                 data, labels = data.float().to(self.device), labels.long().to(self.device)
-                outputs = self.model(data)
-                test_loss += eval(self.criterion)()(outputs, labels).item()
+
+                # foreward pass through all models
+                for model_idx, _model in enumerate(self.models):
+                    outputs = _model(data)
+                    test_losses[model_idx] += eval(self.criterion)()(outputs, labels).item()
                 
-                predicted = outputs.argmax(dim=1, keepdim=True)
-                correct += predicted.eq(labels.view_as(predicted)).sum().item()
+                    predicted = outputs.argmax(dim=1, keepdim=True)
+                    corrects[model_idx] += predicted.eq(labels.view_as(predicted)).sum().item()
 
                 if self.device == "cuda": torch.cuda.empty_cache()
-        self.model.to("cpu")
+        # move all models to cpu
+        for _model in self.models:
+            _model.to("cpu")
 
-        test_loss = test_loss / len(self.dataloader)
-        test_accuracy = correct / len(self.data)
+        test_losses = [test_loss / len(self.dataloader) for test_loss in test_losses]
+        test_accuracys = [correct / len(self.data) for correct in corrects]
 
-        message = f"\t[Client {str(self.id).zfill(4)}] ...finished evaluation!\
+        # message = f"\t[Client {str(self.id).zfill(4)}] ...finished evaluation!"
+        # print(message, flush=True); logging.info(message)
+        # del message; gc.collect()
+
+        for test_loss, test_accuracy in zip(test_losses, test_accuracys):
+            message = f"\t[Client {str(self.id).zfill(4)}] ...finished evaluation!\
             \n\t=> Test loss: {test_loss:.4f}\
             \n\t=> Test accuracy: {100. * test_accuracy:.2f}%\n"
-        print(message, flush=True); logging.info(message)
-        del message; gc.collect()
+            print(message, flush=True); logging.info(message)
+            del message; gc.collect()
 
-        return test_loss, test_accuracy
+        # print (test_losses, test_accuracys)
+        return test_losses, test_accuracys

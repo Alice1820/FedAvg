@@ -25,7 +25,7 @@ optim_config:
 init_config:
   init_type: "xavier"
   init_gain: 1.0
-  gpu_ids: [0, 1, 2]
+  gpu_ids: [0, 1]
 ---
 model_config: 
   num_modals: 2
@@ -35,21 +35,20 @@ model_config:
   # num_hiddens: 200
   # num_classes: 10
   modals_config:
-    [
-    modal: "rgb"
-    name: CNN
-    in_channels: 1
-    hidden_channels: 32
-    num_hiddens: 512
-    num_classes: 10
-    ,
-    modal: 'rgb'
-    name: CNN
-    in_channels: 1
-    hidden_channels: 32
-    num_hiddens: 512
-    num_classes: 10
-    ]
+    -   
+        # modal: "rgb"
+        name: CNN
+        in_channels: 1
+        hidden_channels: 32
+        num_hiddens: 512
+        num_classes: 10
+    -   
+        # modal: "rgb"
+        name: CNN
+        in_channels: 1
+        hidden_channels: 32
+        num_hiddens: 512
+        num_classes: 10
 ---
 log_config:
   log_path: "./log/"
