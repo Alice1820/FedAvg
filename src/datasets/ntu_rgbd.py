@@ -196,78 +196,41 @@ def depth_transform(np_clip):
     return np_clip
 
 # %%
-class NTU_x(Dataset):
-    # RGBDI Dataset
-    def __init__(self, root_dir='/data/NTU_RGBD_60',  # /data0/xifan/NTU_RGBD_60
-                 split='cross_subject', # 40 subjects, 3 cameras
+class NTU_X(Dataset):
+    r""" Supervised RGBD Dataset
+        Args:
+            root_dir (string): Directory where data is.
+            subjects (list): List of subject number
+            
+    """
+    def __init__(self, root_dir='/data0/xfzhang/data/NTU_RGBD_60',  # /data0/xifan/NTU_RGBD_60
                  stage='train',
+                 subjects=[],
                  temTransform=None,
                  spaTransform=None,
                  depTransform=None,
-                 vid_len=(8, 8),
-                 args=None):
-        """
-        Args:
-            root_dir (string): Directory where data is.
-            transform (callable, optional): Optional transform to be applied
-                on a sample.
-        """
-        basename_rgb = os.path.join(root_dir, 'nturgbd_rgb/avi_310x256_30') 
-        basename_dep = os.path.join(root_dir, 'nturgbd_depth_masked/dep_310*256') 
-    
-        self.vid_len = vid_len
+                 vid_len=(8, 8)):
+        # check subjects list is not empty
+        assert len(subjects) != 0
 
+        # basename
+        self.basename_rgb = os.path.join(root_dir, 'nturgbd_rgb/avi_310x256_30') 
+        self.basename_dep = os.path.join(root_dir, 'nturgbd_depth_masked/dep_310*256') 
+    
+        self.vid_len = vid_len # (8, 8)
+        self.subjects = subjects
         self.rgb_list = []
         self.dep_list = []
         self.labels = []
 
-        if split == 'cross_subject':
-            if stage == 'train':
-                subjects = [1, 4, 8, 13, 15, 16, 17, 18, 19, 25, 27, 28, 31, 34, 35, 38]
-            elif stage == 'train100':
-                subjects = [1, 4, 8, 13, 15, 16, 17, 18, 19, 25, 27, 28, 31, 34, 35, 38, 2, 5, 9, 14, 3, 6, 7, 10, 11, 12, 20, 21, 22, 23, 24, 26, 29, 30, 32, 33, 36, 37, 39, 40]
-            elif stage == 'traindev':
-                subjects = [1, 4, 8, 13, 15, 16, 17, 18, 19, 25, 27, 28, 31, 34, 35, 38, 2, 5, 9, 14]
-            elif stage == 'train5':
-                subjects = [1]
-            elif stage == 'train5b':
-                subjects = [4]
-            elif stage == 'train5c':
-                subjects = [8]
-            elif stage == 'train10':
-                subjects = [1, 4]
-            elif stage == 'train25':
-                subjects = [1, 4, 8, 13]
-            elif stage == 'train25b':
-                subjects = [15, 16, 17, 18]
-            elif stage == 'train25c':
-                subjects = [19, 25, 27, 28]
-            elif stage == 'train25d':
-                subjects = [31, 34, 35, 38]
-            elif stage == 'train50':
-                subjects = [1, 4, 8, 13, 15, 16, 17, 18]
-            elif stage == 'train50':
-                subjects = [1, 4, 8, 13, 15, 16, 17, 18]
-            elif stage == 'trainexp':
-                subjects = [1]
-            elif stage == 'test':
-                subjects = [3, 6, 7, 10, 11, 12, 20, 21, 22, 23, 24, 26, 29, 30, 32, 33, 36, 37, 39, 40]
-            elif stage == 'dev':  # smaller train datase for exploration
-                subjects = [2, 5, 9, 14]
-                # subjects = [2]
-            else:
-                raise Exception('wrong stage: ' + stage)
-            self.rgb_list += [os.path.join(basename_rgb, f) for f in sorted(os.listdir(basename_rgb)) if
-                          f.split(".")[-1] == "avi" and int(f[9:12]) in subjects]
-            self.dep_list += [os.path.join(basename_dep, f) for f in sorted(os.listdir(basename_dep)) if 
-                         int(f[9:12]) in subjects]
-            self.labels += [int(f[17:20]) for f in sorted(os.listdir(basename_rgb)) if
-                        f.split(".")[-1] == "avi" and int(f[9:12]) in subjects]
+        self.rgb_list += [os.path.join(self.basename_rgb, f) for f in sorted(os.listdir(self.basename_rgb)) if
+                        f.split(".")[-1] == "avi" and int(f[9:12]) in self.subjects]
+        self.dep_list += [os.path.join(self.basename_dep, f) for f in sorted(os.listdir(self.basename_dep)) if 
+                        int(f[9:12]) in self.subjects]
+        self.labels += [int(f[17:20]) for f in sorted(os.listdir(self.basename_rgb)) if
+                    f.split(".")[-1] == "avi" and int(f[9:12]) in self.subjects]
 
         self.rgb_list, self.dep_list, self.labels = shuffle(self.rgb_list, self.dep_list, self.labels)
-        self.root_dir = root_dir
-        self.stage = stage
-        self.args = args
         self.temTransform = temTransform
         self.spaTransform = spaTransform
         self.depTransform = depTransform
@@ -292,86 +255,30 @@ class NTU_x(Dataset):
             sample['rgb'] = self.spaTransform(sample['rgb'])
         if self.depTransform:
             sample['dep'] = self.depTransform(sample['dep'])
-        return sample
+        return sample['rgb'], sample['dep'], sample['label']
 
-class NTU_u(Dataset):
-    # RGBDI Dataset
-    def __init__(self, root_dir='/data/NTU_RGBD_60',  # /data0/xifan/NTU_RGBD_60
-                 split='cross_subject', # 40 subjects, 3 cameras
-                 stage='train',
+class NTU_U(NTU_X):
+    r""" Unsupervised RGBD Dataset
+        Args:
+            root_dir (string): Directory where data is.
+            subjects (list): List of subject number
+
+    """
+    def __init__(self, root_dir='/data0/xfzhang/data/NTU_RGBD_60',  # /data0/xifan/NTU_RGBD_60
+                 subjects=[],
                  temTransform=None,
                  spaTransform_w=None,
                  spaTransform_s=None,
                  depTransform_w=None,
                  depTransform_s=None,
-                 vid_len=(8, 8),
-                 args=None):
-        """
-        Args:
-            root_dir (string): Directory where data is.
-            transform (callable, optional): Optional transform to be applied
-                on a sample.
-        """
-        basename_rgb = os.path.join(root_dir, 'nturgbd_rgb/avi_310x256_30') 
-        basename_dep = os.path.join(root_dir, 'nturgbd_depth_masked/dep_310*256') 
-    
-        self.vid_len = vid_len
-
-        self.rgb_list = []
-        self.dep_list = []
-        self.labels = []
-
-        if split == 'cross_subject':
-            if stage == 'train':
-                subjects = [1, 4, 8, 13, 15, 16, 17, 18, 19, 25, 27, 28, 31, 34, 35, 38]
-            elif stage == 'train100':
-                subjects = [1, 4, 8, 13, 15, 16, 17, 18, 19, 25, 27, 28, 31, 34, 35, 38, 2, 5, 9, 14, 3, 6, 7, 10, 11, 12, 20, 21, 22, 23, 24, 26, 29, 30, 32, 33, 36, 37, 39, 40]
-            elif stage == 'traindev':
-                subjects = [1, 4, 8, 13, 15, 16, 17, 18, 19, 25, 27, 28, 31, 34, 35, 38, 2, 5, 9, 14]
-            elif stage == 'train5':
-                subjects = [1]
-            elif stage == 'train5b':
-                subjects = [4]
-            elif stage == 'train5c':
-                subjects = [8]
-            elif stage == 'train10':
-                subjects = [1, 4]
-            elif stage == 'train25':
-                subjects = [1, 4, 8, 13]
-            elif stage == 'train25b':
-                subjects = [15, 16, 17, 18]
-            elif stage == 'train25c':
-                subjects = [19, 25, 27, 28]
-            elif stage == 'train25d':
-                subjects = [31, 34, 35, 38]
-            elif stage == 'train50':
-                subjects = [1, 4, 8, 13, 15, 16, 17, 18]
-            elif stage == 'train50':
-                subjects = [1, 4, 8, 13, 15, 16, 17, 18]
-            elif stage == 'trainexp':
-                subjects = [1]
-            elif stage == 'test':
-                subjects = [3, 6, 7, 10, 11, 12, 20, 21, 22, 23, 24, 26, 29, 30, 32, 33, 36, 37, 39, 40]
-            elif stage == 'dev':  # smaller train datase for exploration
-                subjects = [2, 5, 9, 14]
-                # subjects = [2]
-            else:
-                raise Exception('wrong stage: ' + stage)
-            self.rgb_list += [os.path.join(basename_rgb, f) for f in sorted(os.listdir(basename_rgb)) if
-                          f.split(".")[-1] == "avi" and int(f[9:12]) in subjects]
-            self.dep_list += [os.path.join(basename_dep, f) for f in sorted(os.listdir(basename_dep)) if 
-                         int(f[9:12]) in subjects]
-            self.labels += [int(f[17:20]) for f in sorted(os.listdir(basename_rgb)) if
-                        f.split(".")[-1] == "avi" and int(f[9:12]) in subjects]
-
-        self.rgb_list, self.dep_list, self.labels = shuffle(self.rgb_list, self.dep_list, self.labels)
-        self.root_dir = root_dir
-        self.stage = stage
-        self.args = args
-        self.temTransform = temTransform
-        self.spaTransform_w = spaTransform_w
+                 vid_len=(8, 8)):
+        super(NTU_X, self).__init__(root_dir=root_dir, 
+                                    subjects=subjects, 
+                                    temTransform=temTransform, 
+                                    spaTransform=spaTransform_w, 
+                                    depTransform=depTransform_w
+                                    )
         self.spaTransform_s = spaTransform_s
-        self.depTransform_w = depTransform_w
         self.depTransform_s = depTransform_s
 
     def __len__(self):
@@ -393,16 +300,16 @@ class NTU_u(Dataset):
        #  print (sample['rgb'].size(), 'rgb')
         samples = {}
         samples['label'] = sample['label']
-        samples['rgb_w'] = self.spaTransform_w(sample['rgb'])
+        samples['rgb_w'] = self.spaTransform(sample['rgb'])
         # print (sample['rgb_w'].size(), 'rgb_w')
         samples['rgb_s'] = self.spaTransform_s(sample['rgb'])
         # print (sample['rgb_s'].size(), 'rgb_s')
-        samples['dep_w'] = self.depTransform_w(sample['dep'])
+        samples['dep_w'] = self.depTransform(sample['dep'])
         # print (sample['dep_w'].size(), 'dep_w')
         samples['dep_s'] = self.depTransform_s(sample['dep'])
         # print (sample['dep_s'].size(), 'dep_s')
      
-        return samples
+        return samples['rgb_w'], samples['rgb_s'], samples['dep_w'], samples['dep_s']
 
 
 def get_ntu_rgbd(args):
@@ -499,7 +406,6 @@ class vidTransformFixMatch(object):
             video_transforms.RandomCrop((224, 224)),
             vidRandAugmentMC(n=2, m=10)])
         self.normalize = transforms.Compose([
-            vidRGB2Lab(rgb2lab),
             # volume_transforms.ClipToTensor(div_255=False),
             volume_transforms.ClipToTensor(div_255=div_255),
             video_transforms.Normalize(mean=mean, std=std)

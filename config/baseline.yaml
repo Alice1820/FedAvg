@@ -4,12 +4,24 @@ global_config:
   is_mp: True
 ---
 data_config:
+  name: NTU_x
   data_path: "./data/"
   dataset_name: "NTU_RGBD_60"
   num_shards: 200
   iid: True
-  modals: ["rgb", "depth"] # modalities combinations
-  nodes: [6, 6, 6] # number of nodes for each combination, [A, B], [A], [B]
+---
+server_config:
+  modals: ["rgb", "dep"]
+  learn_strategy: "X" # X - supervised, U -unsupervised
+---
+clients_config:
+  modals: ["rgb", "dep"]
+  clients_modals: # list of list, check length of clients_modals == clients_learn_strategy == clients_node
+    - ["rgb", "dep"]
+    - ["rgb"]
+    - ["dep"]
+  clients_learn_strategy: ["X", "X", "X"] 
+  clients_nodes: [6, 6, 6] # number of nodes for each combination, [A, B], [A], [B]
 ---
 fed_config:
   C: 0.1
@@ -29,21 +41,28 @@ init_config:
   init_gain: 1.0
   gpu_ids: [0, 1, 2]
 ---
-model_config:
+model_config: 
   num_modals: 2
-  modals: ["rgb", "depth"]
-  modals_config:
-    [
-    modal: "rgb"
-    name: TSN
-    in_channels: 3
-    num_classes: 60
-    ,
-    modal: "depth"
-    name: TSN
-    in_channels: 1
-    num_classes: 60
-    ]
+  modals: ["rgb", "rgb"]
+  # name: TwoNN
+  # in_features: 784
+  # num_hiddens: 200
+  # num_classes: 10
+  backbone_config: # list of dictionary
+    -   
+        # modal: "rgb"
+        name: CNN
+        in_channels: 1
+        hidden_channels: 32
+        num_hiddens: 512
+        num_classes: 10
+    -   
+        # modal: "rgb"
+        name: CNN
+        in_channels: 1
+        hidden_channels: 32
+        num_hiddens: 512
+        num_classes: 10
 ---
 log_config:
   log_path: "./log/"

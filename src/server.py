@@ -91,7 +91,7 @@ class Server(object):
         # assert number of modals and models
         assert self.model_config['num_modals'] == len(self.model_config['modals']) == len(self.model_config['modals_config'])
         # init every model in self.models
-        for idx, modal_config in enumerate(self.model_config['modals_config']):
+        for idx, modal_config in enumerate(self.model_config['backbone_config']): # backbone_config is a list of dictionaries
             print (modal_config)
             model = eval(modal_config["name"])(**modal_config)
             # initialize weights of the model
@@ -225,7 +225,7 @@ class Server(object):
         for model_index, _model in enumerate(self.models):
             averaged_weights = OrderedDict()
             for it, idx in tqdm(enumerate(sampled_client_indices), leave=False):
-                print ("check length of client models", len(self.clients[idx].models))
+                # print ("check length of client models", len(self.clients[idx].models)) # 2
                 local_weights = self.clients[idx].models[model_index].state_dict()
                 for key in _model.state_dict().keys():
                     if it == 0:
