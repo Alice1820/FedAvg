@@ -2,7 +2,6 @@ global_config:
   seed: 5959
   device: "cuda"
   is_mp: False
-  # is_para 
 ---
 data_config:
   data_path: "/data0/xfzhang/data/NTU_RGBD_60/" # root_dir
@@ -30,7 +29,7 @@ fed_config:
   K: 36 # numbers of clients
   R: 1000 # rounds
   E: 1 # epochs
-  B: 32 # batchsize
+  B: 8 # batchsize
   criterion: torch.nn.CrossEntropyLoss
   optimizer: torch.optim.SGD
 ---
@@ -41,7 +40,7 @@ optim_config:
 init_config:
   init_type: "xavier"
   init_gain: 1.0
-  gpu_ids: [0]
+  gpu_ids: [0, 1]
 ---
 model_config: 
   num_modals: 2
@@ -50,18 +49,18 @@ model_config:
     -
         modal: "RGB"
         name: TSN
-        base_model: "resnet18"
+        base_model: "resnet50"
         num_class: 60
         img_feature_dim: 256
     -   
         modal: "Depth"
         name: TSN
-        base_model: "resnet18"
+        base_model: "resnet50"
         num_class: 60
         img_feature_dim: 256
 ---
 log_config:
   log_path: "./log/"
-  log_name:  "baseline.log"
+  log_name:  "baseline-resnet50.log"
   tb_port: 5252
   tb_host: "0.0.0.0"

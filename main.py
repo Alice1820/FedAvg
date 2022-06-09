@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import datetime
 import pickle
@@ -15,7 +16,8 @@ from src.utils import launch_tensor_board
 
 if __name__ == "__main__":
     # read configuration file
-    with open('./config/baseline.yaml') as c:
+    assert len(sys.argv) > 1
+    with open('{}'.format(sys.argv[1])) as c:
         configs = list(yaml.load_all(c, Loader=yaml.FullLoader))
     global_config = configs[0]["global_config"]
     data_config = configs[1]["data_config"]
@@ -28,7 +30,10 @@ if __name__ == "__main__":
     init_config = configs[6]["init_config"]
     model_config = configs[7]["model_config"]
     log_config = configs[8]["log_config"]
-   
+    
+    # modify global_config
+    global_config["is_para"] = (len(init_config["gpu_ids"]) > 1)
+
     # modify log_path to contain current time
     log_config["log_path"] = os.path.join(log_config["log_path"], str(datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S")))
 

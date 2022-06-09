@@ -58,14 +58,14 @@ class Client(object):
 
     def setup(self, **client_config):
         """Set up common configuration of each client; called by center server."""
-        self.dataloader = DataLoader(self.data, batch_size=client_config["batch_size"], shuffle=True, num_workers=8)
+        self.dataloader = DataLoader(self.data, batch_size=client_config["batch_size"], shuffle=True, num_workers=4)
         # self.local_epoch = client_config["num_local_epochs"] * int(MAX_INS / len(self.data))
         self.local_epoch = client_config["num_local_epochs"]
         self.criterion = client_config["criterion"]
         self.optimizer = client_config["optimizer"]
         self.optim_config = client_config["optim_config"]
 
-    def client_update(self, display=True):
+    def client_update(self, display=False):
         """Update local model using local dataset."""
         optimizers = []
         self.parallel_models = []
@@ -89,6 +89,7 @@ class Client(object):
                 for _optimizer, _model, _data in zip(optimizers, self.models, data):
                     _optimizer.zero_grad()
                     outputs = _model(_data)
+                    torch.cuda.synchronize()
                     loss = eval(self.criterion)()(outputs, labels)
 
                     # display

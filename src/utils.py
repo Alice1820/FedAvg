@@ -104,8 +104,12 @@ class CustomTensorDataset(Dataset):
         return self.tensors[0].size(0)
 
 def create_ntu_datasets(data_path, num_clients):
-    train_subjects = [1, 4, 8, 13, 15, 16, 17, 18, 19, 25, 27, 28, 31, 34, 35, 38, 2, 5, 9, 14] # 20 subjects
-    test_subjects = [3, 6, 7, 10, 11, 12, 20, 21, 22, 23, 24, 26, 29, 30, 32, 33, 36, 37, 39, 40] # 20 subjects
+    # config A
+    # train_subjects = [1, 4, 8, 13, 15, 16, 17, 18, 19, 25, 27, 28, 31, 34, 35, 38, 2, 5, 9, 14] # 20 subjects
+    # test_subjects = [3, 6, 7, 10, 11, 12, 20, 21, 22, 23, 24, 26, 29, 30, 32, 33, 36, 37, 39, 40] # 20 subjects
+    # # config B
+    train_subjects = [1, 4, 8, 13, 15, 16, 17, 18, 19, 25, 27, 28, 31, 34, 35, 38, 3, 6, 7, 10, 11, 12, 20, 21, 22, 23, 24, 26, 29, 30, 32, 33, 36, 37, 39, 40 ] # 36 subjects
+    test_subjects = [2, 5, 9, 14] # 4 subjects
 
     test_dataset = get_ntu_rgbd_test(root_dir=data_path, subjects=test_subjects)
     # naturally non-IID

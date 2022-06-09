@@ -100,7 +100,7 @@ class Server(object):
             model = eval(backbone_config["name"])(**backbone_config)
             # initialize weights of the model
             torch.manual_seed(self.seed)
-            init_single_net(model, **self.init_config)
+            # init_single_net(model, **self.init_config)
             self.models.append(model)
             message = f"[Round: {str(self._round).zfill(4)}] ...successfully initialized backbone {backbone_config}"
             print (message); gc.collect()
@@ -119,7 +119,7 @@ class Server(object):
 
         # prepare hold-out dataset for evaluation
         self.data = test_dataset
-        self.dataloader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=8)
+        self.dataloader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=4)
         
         # configure detailed settings for client upate and 
         self.setup_clients(
@@ -161,7 +161,7 @@ class Server(object):
 
             for client in tqdm(self.clients, leave=False): #
                 client.models = copy.deepcopy(self.models)
-                # client.models = [nn.DataParallel(_model) for _model in client.models]
+                client.models = [nn.DataParallel(_model) for _model in client.models]
 
             # # move all models to cpu
             # for _model in self.models:
@@ -175,7 +175,7 @@ class Server(object):
 
             for k, idx in tqdm(enumerate(sampled_client_indices), leave=False):
                 self.clients[idx].models = copy.deepcopy(self.models)
-                # client.models = [nn.DataParallel(_model) for _model in client.models]
+                self.clients[idx].models = [nn.DataParallel(_model) for _model in self.clients[idx].models]
             # # move all models to cpu
             # for _model in self.models:
             #     _model.to("cpu")
@@ -242,8 +242,8 @@ class Server(object):
             for it, idx in tqdm(enumerate(sampled_client_indices), leave=False):
                 # print ("check length of client models", len(self.clients[idx].models)) # 2
                 # parallel training
-                local_weights = self.clients[idx].models[model_index].state_dict()
-                # local_weights = self.clients[idx].models[model_index].module.state_dict()
+                # local_weights = self.clients[idx].models[model_index].state_dict()
+                local_weights = self.clients[idx].models[model_index].module.state_dict()
                 for key in _model.state_dict().keys():
                     if it == 0:
                         averaged_weights[key] = coefficients[it] * local_weights[key]
@@ -293,15 +293,15 @@ class Server(object):
             selected_total_size = self.update_selected_clients(sampled_client_indices)
 
         # evaluate selected clients with local dataset (same as the one used for local update)
-        if self.mp_flag:
-            message = f"[Round: {str(self._round).zfill(4)}] Evaluate selected {str(len(sampled_client_indices))} clients' models...!"
-            print(message); logging.info(message)
-            del message; gc.collect()
+        # if self.mp_flag:
+        #     message = f"[Round: {str(self._round).zfill(4)}] Evaluate selected {str(len(sampled_client_indices))} clients' models...!"
+        #     print(message); logging.info(message)
+        #     del message; gc.collect()
 
-            with pool.ThreadPool(processes=cpu_count() - 1) as workhorse:
-                workhorse.map(self.mp_evaluate_selected_models, sampled_client_indices)
-        else:
-            self.evaluate_selected_models(sampled_client_indices)
+        #     with pool.ThreadPool(processes=cpu_count() - 1) as workhorse:
+        #         workhorse.map(self.mp_evaluate_selected_models, sampled_client_indices)
+        # else:
+        #     self.evaluate_selected_models(sampled_client_indices)
 
         # calculate averaging coefficient of weights
         mixing_coefficients = [len(self.clients[idx]) / selected_total_size for idx in sampled_client_indices]
