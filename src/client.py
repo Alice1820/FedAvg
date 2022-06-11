@@ -10,9 +10,10 @@ import torch.nn as nn
 
 from torch.utils.data import DataLoader
 
-logger = logging.getLogger(__name__)
+from .utils import *
+from .criterion import *
 
-MAX_INS = 5760 * 2
+logger = logging.getLogger(__name__)
 
 class Client(object):
     """Class for client object having its own (private) data and resources to train a model.
@@ -89,23 +90,38 @@ class Client(object):
                 if self.learn_strategy == 'X':
                     for _modal, _modal_index in zip(self.modals, self.modals_index):
                         data[_modal] = inputs[_modal_index * 2].float().to(self.device)
+                elif self.learn_strategy == 'U':
+                    for _modal, _modal_index in zip(self.modals, self.modals_index):
+                        data[_modal] = interleave(
+                        torch.cat((inputs[_modal_index * 2], inputs[_modal_index * 2 + 1])), 2).to(self.device)
                 else:
                     raise Exception("Not implemented.")
                 # data = [modala_w.float().to(self.device), modalb_w.float().to(self.device)]
                 labels = labels.long().to(self.device)
                 # iterate over every model with same data
+                outputs = {}
+                loss = 0
                 for _modal in self.modals:
                     optimizers[_modal].zero_grad()
-                    outputs = self.models[_modal](data[_modal])
+                    outputs[_modal] = self.models[_modal](data[_modal])
                     torch.cuda.synchronize()
-                    loss = eval(self.criterion)()(outputs, labels)
+                if self.learn_strategy == 'X':
+                    for _modal in self.modals:
+                        loss += eval(self.criterion)()(outputs[_modal], labels)
+                if self.learn_strategy == 'U':
+                    for _modal in self.modals:
+                        outputs[_modal] = de_interleave(outputs[_modal], 2)
+                        loss += FixMatchLoss()(outputs.values[0].chunk(2)[0], outputs.values[0].chunk(2)[1])
+                    if self.num_modals == 2:
+                        loss += MultiMatchLoss()(outputs.values[0].chunk(2)[0], outputs.values[0].chunk(2)[1], 
+                                                        outputs.values[1].chunk(2)[0], outputs.values[1].chunk(2)[1])
                     # display
-                    if display: print("Id: {} Epoch: {} / {} Iter: {} / {} Loss: {:.2f}".format(self.id, e, self.local_epoch, idx, len(self.dataloader), loss.data.cpu().numpy()), end='\r')
-
-                    loss.backward()
-                    optimizers[_modal].step() 
+                    # if display: print("Id: {} Epoch: {} / {} Iter: {} / {} Loss: {:.2f}".format(self.id, e, self.local_epoch, idx, len(self.dataloader), loss.data.cpu().numpy()), end='\r')
+                loss.backward()
+                optimizers[_modal].step()
 
                 if self.device == "cuda": torch.cuda.empty_cache()
+
         for _model in self.models.values():
             _model.to("cpu")
 

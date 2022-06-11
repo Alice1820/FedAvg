@@ -1,0 +1,70 @@
+global_config:
+  seed: 5959
+  device: "cuda"
+  is_mp: False 
+  # is_para 
+  use_ema: False # use exponential moving average
+  ema_decay: 0.999
+---
+data_config:
+  data_path: "/data0/xfzhang/data/NTU_RGBD_60/" # root_dir
+  dataset_name: "NTU_RGBD"
+  modals: ["RGB", "Depth"]
+  num_shards: 200
+  iid: True
+---
+server_config:
+  modals: ["RGB", "Depth"]
+  learn_strategy: "X" # X - supervised, U - unsupervised, N - None
+---
+clients_config:
+  modals: ["RGB", "Depth"]
+  clients_modals: # list of list, check length of clients_modals == clients_learn_strategy == clients_node
+    - ["RGB", "Depth"]
+    - ["RGB"]
+    - ["Depth"]
+  clients_learn_strategy: ["X", "X", "X"] 
+  # clients_nodes: [6, 6, 6] # number of nodes for each combination, [A, B], [A], [B]
+---
+fed_config:
+  C: 0.05 # fraction
+  SS: 6 # server subjects
+  K: 30 # numbers of clients
+  R: 1000 # rounds
+  E: 1 # epochs
+  SE: 1 # global_epochs
+  B: 16 # batchsize
+  criterion: torch.nn.CrossEntropyLoss
+  optimizer: torch.optim.SGD
+---
+optim_config:
+  lr: 0.001
+  momentum: 0.9
+---
+init_config:
+  init_type: "xavier"
+  init_gain: 1.0
+  gpu_ids: [0, 1]
+---
+model_config: 
+  num_modals: 2
+  modals: ["RGB", "Depth"]
+  backbone_config: # list of dictionary
+    -
+        modal: "RGB"
+        name: TSN
+        base_model: "resnet18" # bs: 4~8 per gpu
+        num_class: 60
+        img_feature_dim: 256
+    -   
+        modal: "Depth"
+        name: TSN
+        base_model: "resnet18"
+        num_class: 60
+        img_feature_dim: 256
+---
+log_config:
+  log_path: "./log/"
+  log_name:  "baseline-combines.log"
+  tb_port: 5256
+  tb_host: "0.0.0.0"

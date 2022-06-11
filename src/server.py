@@ -85,8 +85,10 @@ class Server(object):
 
         self.fraction = fed_config["C"]
         self.num_clients = fed_config["K"]
+        self.num_server_subjects = fed_config["SS"]
         self.num_rounds = fed_config["R"]
         self.local_epochs = fed_config["E"]
+        self.global_epoch = fed_config["SE"]
         self.batch_size = fed_config["B"]
 
         self.criterion = fed_config["criterion"]
@@ -122,17 +124,24 @@ class Server(object):
 
         # split local dataset for each client
         # TODO: different num_local_epochs for every client
-        local_datasets, test_dataset = create_datasets(self.data_path, self.dataset_name, self.num_clients, self.num_shards, self.iid)
+        local_datasets, global_dataset, test_dataset = create_datasets(self.data_path, self.dataset_name, self.num_clients, self.num_shards, self.iid, 
+                                                        num_server_subjects=self.num_server_subjects, seed=self.seed)
         
         local_modals, local_modals_index, local_learn_strategy = create_modals(self.num_clients, self.modals, self.clients_modals, self.clients_learn_strategy)
+
+        message = f"[Round: {str(self._round).zfill(4)}] Created server: DATA {len(global_dataset)}, MODALS: {self.modals},  LEARN: {self.learn_strategy}!"
+        print(message); logging.info(message)
+        del message; gc.collect()
 
         # assign dataset to each client
         self.clients = self.create_clients(local_datasets, local_modals, local_modals_index, local_learn_strategy)
 
         # prepare hold-out dataset for evaluation
         self.data = test_dataset
-        self.dataloader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=8)
+        self.global_dataloader = DataLoader(global_dataset, batch_size=self.batch_size, shuffle=False, num_workers=8)
+        self.test_dataloader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=8)
         
+        self.modals_index = range(len(self.modals))
         # configure detailed settings for client upate and 
         self.setup_clients(
             batch_size=self.batch_size,
@@ -226,7 +235,7 @@ class Server(object):
         del message; gc.collect()
 
         selected_total_size = 0
-        for idx in tqdm(sampled_client_indices, leave=False):
+        for idx in tqdm(sampled_client_indices, leave=True):
             self.clients[idx].client_update()
             selected_total_size += len(self.clients[idx])
 
@@ -341,7 +350,46 @@ class Server(object):
 
         # average each updated model parameters of the selected clients and update the global model
         self.average_model(sampled_client_indices, mixing_coefficients)
+    
+    def train_global_model(self):
+        """Update the global model using the global holdout training dataset (self.train_dataloader)."""
+        optimizers = {}
+        for _modal in self.models.keys():
+            self.models[_modal].train()
+            self.models[_modal].to(self.device)
+            optimizers[_modal] = (eval(self.optimizer)(self.models[_modal].parameters(), **self.optim_config))
+            # self.parallel_models.append(nn.DataParallel(_model))
+        # self.models = [nn.DataParallel(_model) for _model in self.models]
+        # training
+        for e in range(self.global_epoch):
+            for inputs, labels in tqdm(self.global_dataloader):
+            # for inputs, labels in self.dataloader:
+                # check len(inputs) = 2*num_modals
+                data = {}
+                if self.learn_strategy == 'X':
+                    for _modal, _modal_index in zip(self.modals, self.modals_index):
+                        data[_modal] = inputs[_modal_index * 2].float().to(self.device) # select every two elements, all weakly supervised models
+                else:
+                    raise Exception("Not implemented.")
+                # data = [modala_w.float().to(self.device), modalb_w.float().to(self.device)]
+                labels = labels.long().to(self.device)
+                # iterate over every model with same data
+                for _modal in self.modals:
+                    optimizers[_modal].zero_grad()
+                    outputs = self.models[_modal](data[_modal])
+                    torch.cuda.synchronize()
+                    loss = eval(self.criterion)()(outputs, labels)
+                    loss.backward()
+                    optimizers[_modal].step() 
+
+                if self.device == "cuda": torch.cuda.empty_cache()
+        for _model in self.models.values():
+            _model.to("cpu")
         
+        message = f"[Round: {str(self._round).zfill(4)}] ...updated global model using the global holdout training dataset!"
+        print(message); logging.info(message)
+        del message; gc.collect()
+
     def evaluate_global_model(self):
         """Evaluate the global model using the global holdout dataset (self.data)."""
         for _model in self.models.values():
@@ -350,9 +398,9 @@ class Server(object):
 
         test_losses, corrects = [0 for _ in self.models.keys()], [0 for _ in self.models.keys()]
         with torch.no_grad():
-            for inputs, labels in tqdm(self.dataloader):
+            for inputs, labels in tqdm(self.test_dataloader):
                 data = {}
-                if self.learn_strategy == 'N':
+                if self.learn_strategy in ["N", "X"]:
                     for _modal, _modal_index in zip(self.modals, range(len(self.modals))):
                         data[_modal] = inputs[_modal_index * 2].float().to(self.device)
                 else:
@@ -371,7 +419,7 @@ class Server(object):
         for _model in self.models.values():
             _model.to("cpu")
 
-        test_losses = [test_loss / len(self.dataloader) for test_loss in test_losses]
+        test_losses = [test_loss / len(self.test_dataloader) for test_loss in test_losses]
         test_accuracys = [correct / len(self.data) for correct in corrects]
 
         return test_losses, test_accuracys
@@ -383,6 +431,8 @@ class Server(object):
             self._round = r + 1
             
             self.train_federated_model()
+            if self.learn_strategy != 'N':
+                self.train_global_model()
             test_loss, test_accuracy = self.evaluate_global_model()
             
             self.results['loss'].append(test_loss)

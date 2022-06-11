@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 #####################################################################
 # Single Modality Fixmatch (Pseudo-labeling Loss) #
 #####################################################################
-class SingleFixmatchLoss(torch.nn.CrossEntropyLoss):
+class FixMatchLoss(torch.nn.CrossEntropyLoss):
     r"""This criterion computes the cross entropy loss between input and target.
 
     It is useful when training a classification problem with `C` classes.
@@ -146,7 +146,7 @@ class SingleFixmatchLoss(torch.nn.CrossEntropyLoss):
 
     def __init__(self, weight: Optional[Tensor] = None, size_average=None, ignore_index: int = -100,
                  reduce=None, reduction: str = 'mean', label_smoothing: float = 0.0, threshold: float = 0.8, T: float = 10) -> None:
-        super(SingleFixmatchLoss, self).__init__(weight, size_average, reduce, reduction)
+        super(FixMatchLoss, self).__init__(weight, size_average, reduce, reduction)
         self.ignore_index = ignore_index
         self.label_smoothing = label_smoothing
         self.threshold = threshold
@@ -157,13 +157,13 @@ class SingleFixmatchLoss(torch.nn.CrossEntropyLoss):
         pseudo_label = torch.softmax(input_w.detach()/self.T, dim=-1)
         max_probs, targets_u = torch.max(pseudo_label, dim=-1) # [bs, 1]
         mask = max_probs.ge(self.threshold).float() # prob of max_probs > threshold
-        return F.cross_entropy(input_s, targets_u, reduction='mean') * mask
+        return F.cross_entropy(input_s, targets_u, self.reduction) * mask
 
 
 #####################################################################
 # Multi(Two) Modality Fixmatch (Pseudo-labeling Loss) #
 #####################################################################
-class MultiFixmatchLoss(torch.nn.CrossEntropyLoss):
+class MultiMatchLoss(torch.nn.CrossEntropyLoss):
     r"""This criterion computes the cross entropy loss between input and target.
 
     It is useful when training a classification problem with `C` classes.
@@ -291,7 +291,7 @@ class MultiFixmatchLoss(torch.nn.CrossEntropyLoss):
 
     def __init__(self, weight: Optional[Tensor] = None, size_average=None, ignore_index: int = -100,
                  reduce=None, reduction: str = 'mean', label_smoothing: float = 0.0, threshold: float = 0.8, T: float = 10) -> None:
-        super(SingleFixmatchLoss, self).__init__(weight, size_average, reduce, reduction)
+        super(MultiMatchLoss, self).__init__(weight, size_average, reduce, reduction)
         self.ignore_index = ignore_index
         self.label_smoothing = label_smoothing
         self.threshold = threshold
