@@ -214,7 +214,7 @@ class Server(object):
             # send the global model to all clients before the very first and after the last federated round
             assert (self._round == 0) or (self._round == self.num_rounds)
 
-            for client in tqdm(self.clients, leave=False): #
+            for client in self.clients: #
                 # print (client.modals)
                 for _modal in client.modals:
                     # print (type(_modal), type(client.models), type(self.models))

@@ -40,6 +40,8 @@ class Client(object):
         self.modals = local_modals
         self.modals_index = local_modals_index
         self.learn_strategy = local_learn_strategy
+        self.fixmatch = FixMatchLoss()
+        self.multimatch = MultiMatchLoss()
     
     @property
     def models(self):
@@ -90,7 +92,7 @@ class Client(object):
                 if self.learn_strategy == 'X':
                     for _modal, _modal_index in zip(self.modals, self.modals_index):
                         data[_modal] = inputs[_modal_index * 2].float().to(self.device)
-                elif self.learn_strategy == 'U':
+                elif self.learn_strategy in ['F', 'U']:
                     for _modal, _modal_index in zip(self.modals, self.modals_index):
                         data[_modal] = interleave(
                         torch.cat((inputs[_modal_index * 2], inputs[_modal_index * 2 + 1])), 2).to(self.device)
@@ -107,17 +109,21 @@ class Client(object):
                     torch.cuda.synchronize()
                 if self.learn_strategy == 'X':
                     for _modal in self.modals:
-                        loss += eval(self.criterion)()(outputs[_modal], labels)
+                        loss = loss + eval(self.criterion)()(outputs[_modal], labels)
                 if self.learn_strategy in ["F", "U"]:
                     for _modal in self.modals:
                         outputs[_modal] = de_interleave(outputs[_modal], 2)
-                        loss += FixMatchLoss()(outputs[_modal].chunk(2)[0], outputs[_modal].chunk(2)[1])
+                        outputs[_modal + 'w'], outputs[_modal + 's'] = outputs[_modal].chunk(2)
+                        # print (outputs[_modal + 'w'].shape) # torch.Size([16, 60]
+                        loss = loss + self.fixmatch(outputs[_modal + 'w'], outputs[_modal + 's'])
                     if self.learn_strategy == "U":
-                        loss += MultiMatchLoss()(outputs.values()[0].chunk(2)[0], outputs.values()[0].chunk(2)[1], 
-                                                outputs.values()[1].chunk(2)[0], outputs.values()[1].chunk(2)[1])
+                        loss = loss + self.multimatch(outputs[self.modals[0] + 'w'], outputs[self.modals[0] + 's'], 
+                                                        outputs[self.modals[1] + 'w'], outputs[self.modals[1] + 's'])
                     # display
                     # if display: print("Id: {} Epoch: {} / {} Iter: {} / {} Loss: {:.2f}".format(self.id, e, self.local_epoch, idx, len(self.dataloader), loss.data.cpu().numpy()), end='\r')
+                # print (loss)
                 loss.backward()
+
                 for _modal in self.modals:
                     optimizers[_modal].step()
 

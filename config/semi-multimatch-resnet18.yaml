@@ -23,7 +23,7 @@ clients_config:
     - ["RGB", "Depth"]
     - ["RGB"]
     - ["Depth"]
-  clients_learn_strategy: ["U", "U", "U"] 
+  clients_learn_strategy: ["U", "F", "F"] 
   # clients_nodes: [6, 6, 6] # number of nodes for each combination, [A, B], [A], [B]
 ---
 fed_config:
@@ -33,7 +33,7 @@ fed_config:
   R: 1000 # rounds
   E: 1 # epochs
   SE: 1 # global_epochs
-  B: 32 # batchsize
+  B: 16 # batchsize
   criterion: torch.nn.CrossEntropyLoss
   optimizer: torch.optim.SGD
 ---
