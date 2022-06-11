@@ -26,7 +26,7 @@ class Client(object):
         device: Training machine indicator (e.g. "cpu", "cuda").
         __model: torch.nn instance as a local model.
     """
-    def __init__(self, client_id, local_data, device):
+    def __init__(self, client_id, local_data, local_modals, local_modals_index, local_learn_strategy, device):
         """Client object is initiated by the center server."""
         self.id = client_id
         self.data = local_data
@@ -34,7 +34,11 @@ class Client(object):
         # device_id = self.id % torch.cuda.device_count()
         # self.device = torch.device("cuda: {}".format(device_id + 1))
         # self.device = torch.device("cuda: {}".format(device_id + 1))
-        self.__models = []
+        # self.__models = []
+        self.__models = {}
+        self.modals = local_modals
+        self.modals_index = local_modals_index
+        self.learn_strategy = local_learn_strategy
     
     @property
     def models(self):
@@ -58,7 +62,7 @@ class Client(object):
 
     def setup(self, **client_config):
         """Set up common configuration of each client; called by center server."""
-        self.dataloader = DataLoader(self.data, batch_size=client_config["batch_size"], shuffle=True, num_workers=4)
+        self.dataloader = DataLoader(self.data, batch_size=client_config["batch_size"], shuffle=True, num_workers=8)
         # self.local_epoch = client_config["num_local_epochs"] * int(MAX_INS / len(self.data))
         self.local_epoch = client_config["num_local_epochs"]
         self.criterion = client_config["criterion"]
@@ -67,12 +71,11 @@ class Client(object):
 
     def client_update(self, display=False):
         """Update local model using local dataset."""
-        optimizers = []
-        self.parallel_models = []
-        for _model in self.models:
-            _model.train()
-            _model.to(self.device)
-            optimizers.append(eval(self.optimizer)(_model.parameters(), **self.optim_config))
+        optimizers = {}
+        for _modal in self.models.keys():
+            self.models[_modal].train()
+            self.models[_modal].to(self.device)
+            optimizers[_modal] = (eval(self.optimizer)(self.models[_modal].parameters(), **self.optim_config))
             # self.parallel_models.append(nn.DataParallel(_model))
         # self.models = [nn.DataParallel(_model) for _model in self.models]
         # training
@@ -82,42 +85,50 @@ class Client(object):
                 # check len(inputs) = 2*num_modals
                 modala_w, modala_s, modalb_w, modalb_s = inputs
                 # print (torch.min(modala_w), torch.max(modala_w))
-                # print (torch.min(modalb_w), torch.max(modalb_w))
-                data = [modala_w.float().to(self.device), modalb_w.float().to(self.device)]
+                data = {}
+                if self.learn_strategy == 'X':
+                    for _modal, _modal_index in zip(self.modals, self.modals_index):
+                        data[_modal] = inputs[_modal_index * 2].float().to(self.device)
+                else:
+                    raise Exception("Not implemented.")
+                # data = [modala_w.float().to(self.device), modalb_w.float().to(self.device)]
                 labels = labels.long().to(self.device)
                 # iterate over every model with same data
-                for _optimizer, _model, _data in zip(optimizers, self.models, data):
-                    _optimizer.zero_grad()
-                    outputs = _model(_data)
+                for _modal in self.modals:
+                    optimizers[_modal].zero_grad()
+                    outputs = self.models[_modal](data[_modal])
                     torch.cuda.synchronize()
                     loss = eval(self.criterion)()(outputs, labels)
-
                     # display
                     if display: print("Id: {} Epoch: {} / {} Iter: {} / {} Loss: {:.2f}".format(self.id, e, self.local_epoch, idx, len(self.dataloader), loss.data.cpu().numpy()), end='\r')
 
                     loss.backward()
-                    _optimizer.step() 
+                    optimizers[_modal].step() 
 
                 if self.device == "cuda": torch.cuda.empty_cache()
-        for _model in self.models:
+        for _model in self.models.values():
             _model.to("cpu")
 
     def client_evaluate(self):
         """Evaluate local model using local dataset (same as training set for convenience)."""
-        for _model in self.models:
+        for _model in self.models.values:
             _model.eval()
             _model.to(self.device)
 
         test_losses, corrects = [0 for _ in self.models], [0 for _ in self.models]
         with torch.no_grad():
             for inputs, labels in self.dataloader:
-                modala_w, modala_s, modalb_w, modalb_s = inputs
+                data = {}
+                if self.learn_strategy == 'X':
+                    for _modal, _modal_index in zip(self.modals, self.modals_index):
+                        data[_modal] = inputs[_modal_index * 2].float().to(self.device)
+                else:
+                    raise Exception("Not implemented.")
                 labels = labels.long().to(self.device)
-                data = [modala_w.float().to(self.device), modalb_w.float().to(self.device)]
 
                 # foreward pass through all models
-                for idx, _model in enumerate(self.models):
-                    outputs = _model(data[idx])
+                for idx, _modal in enumerate(self.modals):
+                    outputs = self.models[_modal](data[_modal])
                     test_losses[idx] += eval(self.criterion)()(outputs, labels).item()
                 
                     predicted = outputs.argmax(dim=1, keepdim=True)
@@ -125,7 +136,7 @@ class Client(object):
 
                 if self.device == "cuda": torch.cuda.empty_cache()
         # move all models to cpu
-        for _model in self.models:
+        for _model in self.models.values():
             _model.to("cpu")
 
         test_losses = [test_loss / len(self.dataloader) for test_loss in test_losses]

@@ -366,7 +366,7 @@ def get_ntu_rgbd_train(root_dir='/data0/xfzhang/data/NTU_RGBD_60/', num_segments
                         spaTransform_w=spaTransform_w, spaTransform_s=spaTransform_s, 
                         depTransform_w=depTransform_w, depTransform_s=depTransform_s)    
 
-    print('number of train: {}'.format(len(train_dataset)))
+    # print('number of train: {}'.format(len(train_dataset)))
 
     return train_dataset
 
@@ -393,7 +393,7 @@ def get_ntu_rgbd_test(root_dir='/data0/xfzhang/data/NTU_RGBD_60/', num_segments=
                         spaTransform_w=spaTransform_val, spaTransform_s=spaTransform_val, 
                         depTransform_w=depTransform_val, depTransform_s=depTransform_val)
 
-    print('number of test: {}'.format(len(test_dataset)))
+    # print('number of test: {}'.format(len(test_dataset)))
 
     return test_dataset
 

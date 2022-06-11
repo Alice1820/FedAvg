@@ -1,5 +1,7 @@
 import os
 import logging
+from pydoc import cli
+from this import s
 
 import numpy as np
 import torch
@@ -102,6 +104,23 @@ class CustomTensorDataset(Dataset):
 
     def __len__(self):
         return self.tensors[0].size(0)
+
+def create_modals(num_clients, server_modals, clients_modals, clients_learn_strategy):
+    assert len(clients_modals) == len(clients_learn_strategy)
+    assert num_clients % len(clients_modals) == 0
+    clients_combines_index = []
+    for _combine in clients_modals:
+        _clients_combines_index = []
+        for _modal in _combine:
+            _clients_combines_index.append(server_modals.index(_modal))
+        clients_combines_index.append(_clients_combines_index)
+    clients_combines_indexes, clients_combines, clients_strategy = [], [], []
+    for _ in range(int(num_clients / len(clients_modals))):
+        clients_combines.extend(clients_modals)
+        clients_strategy.extend(clients_learn_strategy)
+        clients_combines_indexes.extend(clients_combines_index)
+    
+    return clients_combines, clients_combines_indexes, clients_strategy
 
 def create_ntu_datasets(data_path, num_clients):
     # config A

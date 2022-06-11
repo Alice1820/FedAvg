@@ -1,7 +1,10 @@
 global_config:
   seed: 5959
   device: "cuda"
-  is_mp: False
+  is_mp: False 
+  # is_para 
+  use_ema: False # use exponential moving average
+  ema_decay: 0.999
 ---
 data_config:
   data_path: "/data0/xfzhang/data/NTU_RGBD_60/" # root_dir
@@ -18,14 +21,14 @@ clients_config:
   modals: ["RGB", "Depth"]
   clients_modals: # list of list, check length of clients_modals == clients_learn_strategy == clients_node
     - ["RGB", "Depth"]
-    - ["RGB", "Depth"]
-    - ["RGB", "Depth"]
+    - ["RGB"]
+    - ["Depth"]
   clients_learn_strategy: ["X", "X", "X"] 
   # clients_nodes: [6, 6, 6] # number of nodes for each combination, [A, B], [A], [B]
 ---
 fed_config:
   C: 0.5 # fraction
-  SS: 0
+  SS: 0 # server subjects
   K: 36 # numbers of clients
   R: 1000 # rounds
   E: 1 # epochs
@@ -61,6 +64,6 @@ model_config:
 ---
 log_config:
   log_path: "./log/"
-  log_name:  "baseline-resnet50.log"
-  tb_port: 5252
+  log_name:  "baseline-combines.log"
+  tb_port: 5254
   tb_host: "0.0.0.0"
