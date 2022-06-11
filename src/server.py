@@ -129,7 +129,7 @@ class Server(object):
         
         local_modals, local_modals_index, local_learn_strategy = create_modals(self.num_clients, self.modals, self.clients_modals, self.clients_learn_strategy)
 
-        message = f"[Round: {str(self._round).zfill(4)}] Created server: DATA {len(global_dataset)}, MODALS: {self.modals},  LEARN: {self.learn_strategy}!"
+        message = f"[Round: {str(self._round).zfill(4)}] Created server: DATA {len(global_dataset): >10d} , MODALS: {self.modals: >10d},  LEARN: {self.learn_strategy: >10d}!"
         print(message); logging.info(message)
         del message; gc.collect()
 
@@ -160,7 +160,7 @@ class Server(object):
             client = Client(client_id=k, local_data=dataset, local_modals=local_modals[k], local_modals_index=local_modals_index[k], 
                             local_learn_strategy=local_learn_strategy[k], device=self.device)
             clients.append(client)
-            message = f"[Round: {str(self._round).zfill(4)}] Created client: DATA {len(dataset)}, MODALS: {local_modals[k]},  LEARN: {local_learn_strategy[k]}!"
+            message = f"[Round: {str(self._round).zfill(4)}] Created client: DATA {len(dataset): >10d}, MODALS: {local_modals[k]: >10d},  LEARN: {local_learn_strategy[k]: >10d}!"
             print(message); logging.info(message)
             del message; gc.collect()
 
@@ -225,6 +225,11 @@ class Server(object):
         num_sampled_clients = max(int(self.fraction * self.num_clients), 1)
         sampled_client_indices = sorted(np.random.choice(a=[i for i in range(self.num_clients)], size=num_sampled_clients, replace=False).tolist())
 
+        for idx in sampled_client_indices:
+            message = f"[Round: {str(self._round).zfill(4)}] Sampled Client NO: {idx: >10d}, MODALS: {self.clients[idx].modals: >10d},  LEARN: {self.clients[idx].learn_strategy: >10d} ...!"
+            print(message); logging.info(message)
+            del message; gc.collect()
+
         return sampled_client_indices
     
     def update_selected_clients(self, sampled_client_indices):
@@ -274,27 +279,28 @@ class Server(object):
         for _modal in self.modals:
             # print (_modal)
             averaged_weights = OrderedDict()
+            count = 0
             for it, idx in tqdm(enumerate(sampled_client_indices), leave=False):
                 # print ("check length of client models", len(self.clients[idx].models)) # 2
                 # parallel training
                 # local_weights = self.clients[idx].models[model_index].state_dict()
                 if _modal in self.clients[idx].modals:
-                    present_flag = True
                     local_weights = self.clients[idx].models[_modal].module.state_dict()
                     # print (local_weights.keys())
                     for key in self.models[_modal].state_dict().keys():
                         # print (local_weights.keys())
                         # if it == 0:
-                        if key not in averaged_weights.keys(): # is empty
+                        if count == 0: # is empty
                             averaged_weights[key] = coefficients[it] * local_weights[key]
                         else:
                             averaged_weights[key] += coefficients[it] * local_weights[key]
+                    count += 1
             # print (_modal)
-            if averaged_weights: self.models[_modal].load_state_dict(averaged_weights)
+            if count > 0: self.models[_modal].load_state_dict(averaged_weights)
 
-        message = f"[Round: {str(self._round).zfill(4)}] ...updated weights of {len(sampled_client_indices)} clients are successfully averaged!"
-        print(message); logging.info(message)
-        del message; gc.collect()
+            message = f"[Round: {str(self._round).zfill(4)}] Modal: {_modal} ...updated weights of {count} clients are successfully averaged!"
+            print(message); logging.info(message)
+            del message; gc.collect()
     
     def evaluate_selected_models(self, sampled_client_indices):
         """Call "client_evaluate" function of each selected client."""
@@ -368,6 +374,7 @@ class Server(object):
                 data = {}
                 if self.learn_strategy == 'X':
                     for _modal, _modal_index in zip(self.modals, self.modals_index):
+                        # print (_modal, _modal_index) # RGB, 0 Depth, 1
                         data[_modal] = inputs[_modal_index * 2].float().to(self.device) # select every two elements, all weakly supervised models
                 else:
                     raise Exception("Not implemented.")
@@ -401,7 +408,7 @@ class Server(object):
             for inputs, labels in tqdm(self.test_dataloader):
                 data = {}
                 if self.learn_strategy in ["N", "X"]:
-                    for _modal, _modal_index in zip(self.modals, range(len(self.modals))):
+                    for _modal, _modal_index in zip(self.modals, self.modals_index):
                         data[_modal] = inputs[_modal_index * 2].float().to(self.device)
                 else:
                     raise Exception("Not implemented.")
@@ -433,6 +440,7 @@ class Server(object):
             self.train_federated_model()
             if self.learn_strategy != 'N':
                 self.train_global_model()
+            # TODO: ema model
             test_loss, test_accuracy = self.evaluate_global_model()
             
             self.results['loss'].append(test_loss)
