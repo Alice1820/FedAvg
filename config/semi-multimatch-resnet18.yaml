@@ -23,17 +23,17 @@ clients_config:
     - ["RGB", "Depth"]
     - ["RGB"]
     - ["Depth"]
-  clients_learn_strategy: ["X", "X", "X"] 
+  clients_learn_strategy: ["U", "U", "U"] 
   # clients_nodes: [6, 6, 6] # number of nodes for each combination, [A, B], [A], [B]
 ---
 fed_config:
-  C: 0.05 # fraction
+  C: 0.1 # fraction
   SS: 6 # server subjects
   K: 30 # numbers of clients
   R: 1000 # rounds
   E: 1 # epochs
   SE: 1 # global_epochs
-  B: 16 # batchsize
+  B: 32 # batchsize
   criterion: torch.nn.CrossEntropyLoss
   optimizer: torch.optim.SGD
 ---
@@ -65,6 +65,6 @@ model_config:
 ---
 log_config:
   log_path: "./log/"
-  log_name:  "baseline-combines.log"
+  log_name:  "baseline-fixmatch-resnet18.log"
   tb_port: 5256
   tb_host: "0.0.0.0"

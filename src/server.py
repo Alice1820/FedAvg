@@ -67,14 +67,20 @@ class Server(object):
         self.learn_strategy = server_config["learn_strategy"]
 
         self.models = {}
+        self.eval_models = {}
         self.model_config = model_config
 
         self.clients_modals = clients_config["clients_modals"]
         self.clients_learn_strategy = clients_config["clients_learn_strategy"]
+        self.is_central = "N" in self.clients_learn_strategy
 
         self.seed = global_config["seed"]
         self.device = global_config["device"]
         self.mp_flag = global_config["is_mp"]
+        self.use_ema = global_config["use_ema"]
+        if self.use_ema: 
+            self.ema_models = {}
+            self.ema_decay = global_config["ema_decay"]
 
         self.data_path = data_config["data_path"]
         self.dataset_name = data_config["dataset_name"]
@@ -90,6 +96,12 @@ class Server(object):
         self.local_epochs = fed_config["E"]
         self.global_epoch = fed_config["SE"]
         self.batch_size = fed_config["B"]
+
+        # if self.learn_strategy != 'N': 
+        #     assert self.num_server_subjects > 0
+        #     self.is_central = True
+        # else:
+        #     self.is_central = False
 
         self.criterion = fed_config["criterion"]
         self.optimizer = fed_config["optimizer"]
@@ -116,6 +128,11 @@ class Server(object):
             self.models[modal] = model
             message = f"[Round: {str(self._round).zfill(4)}] ...successfully initialized backbone {backbone_config}"
             print (message); gc.collect()
+
+        if self.use_ema:
+            from models.ema import ModelEMA
+            for _modal in self.modals: self.ema_models[_modal] = ModelEMA(self.models[_modal], ema_decay=self.ema_decay)
+
         # print (self.models["RGB"])
         message = f"[Round: {str(self._round).zfill(4)}] ...successfully initialized {self.model_config['num_modals']} models \
             (# parameters: {[str(sum(p.numel() for p in model.parameters())) for model in self.models.values()]})!"
@@ -129,19 +146,32 @@ class Server(object):
         
         local_modals, local_modals_index, local_learn_strategy = create_modals(self.num_clients, self.modals, self.clients_modals, self.clients_learn_strategy)
 
-        message = f"[Round: {str(self._round).zfill(4)}] Created server: DATA {len(global_dataset): >10d} , MODALS: {self.modals: >10d},  LEARN: {self.learn_strategy: >10d}!"
+        message = f"[Round: {str(self._round).zfill(4)}] Created server: DATA {str(len(global_dataset)).rjust(6, ' ')} , MODALS: {str(self.modals).rjust(20, ' ')},  LEARN: {self.learn_strategy.rjust(4, ' ')}!"
         print(message); logging.info(message)
         del message; gc.collect()
 
-        # assign dataset to each client
-        self.clients = self.create_clients(local_datasets, local_modals, local_modals_index, local_learn_strategy)
+        # assign central_client
+        # if self.is_central:
+        #     self.central_client = Client(client_id=self.num_clients, local_data=global_dataset, local_modals=self.modals, local_modals_index=self.modals_index, 
+        #                         local_learn_strategy=self.learn_strategy, device=self.device)
+        #     message = f"[Round: {str(self._round).zfill(4)}] Created client: DATA: {str(len(self.global_dataset)).rjust(6, ' ')}, MODALS: {str(self.modals).rjust(20, ' ')},  LEARN: {self.learn_strategy.rjust(4, ' ')}!"
+        #     print(message); logging.info(message)
+        #     del message; gc.collect()
 
         # prepare hold-out dataset for evaluation
-        self.data = test_dataset
+        self.train_data = global_dataset
+        self.test_data = test_dataset
         self.global_dataloader = DataLoader(global_dataset, batch_size=self.batch_size, shuffle=False, num_workers=8)
         self.test_dataloader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=8)
         
         self.modals_index = range(len(self.modals))
+
+        if self.is_central:
+            return;
+
+        # assign dataset to each client
+        self.clients = self.create_clients(local_datasets, local_modals, local_modals_index, local_learn_strategy)
+
         # configure detailed settings for client upate and 
         self.setup_clients(
             batch_size=self.batch_size,
@@ -160,7 +190,7 @@ class Server(object):
             client = Client(client_id=k, local_data=dataset, local_modals=local_modals[k], local_modals_index=local_modals_index[k], 
                             local_learn_strategy=local_learn_strategy[k], device=self.device)
             clients.append(client)
-            message = f"[Round: {str(self._round).zfill(4)}] Created client: DATA {len(dataset): >10d}, MODALS: {local_modals[k]: >10d},  LEARN: {local_learn_strategy[k]: >10d}!"
+            message = f"[Round: {str(self._round).zfill(4)}] Created client: DATA: {str(len(dataset)).rjust(6, ' ')}, MODALS: {str(local_modals[k]).rjust(20, ' ')},  LEARN: {local_learn_strategy[k].rjust(4, ' ')}!"
             print(message); logging.info(message)
             del message; gc.collect()
 
@@ -226,7 +256,7 @@ class Server(object):
         sampled_client_indices = sorted(np.random.choice(a=[i for i in range(self.num_clients)], size=num_sampled_clients, replace=False).tolist())
 
         for idx in sampled_client_indices:
-            message = f"[Round: {str(self._round).zfill(4)}] Sampled Client NO: {idx: >10d}, MODALS: {self.clients[idx].modals: >10d},  LEARN: {self.clients[idx].learn_strategy: >10d} ...!"
+            message = f"[Round: {str(self._round).zfill(4)}] Sampled Client NO: {str(idx).zfill(4)}, MODALS: {str(self.clients[idx].modals).rjust(20, ' ')},  LEARN: {self.clients[idx].learn_strategy.rjust(4, ' ')} ...!"
             print(message); logging.info(message)
             del message; gc.collect()
 
@@ -239,10 +269,15 @@ class Server(object):
         print(message); logging.info(message)
         del message; gc.collect()
 
-        selected_total_size = 0
+        selected_total_size = {}
+        for _modal in self.modals:
+            selected_total_size[_modal] = 0
         for idx in tqdm(sampled_client_indices, leave=True):
             self.clients[idx].client_update()
-            selected_total_size += len(self.clients[idx])
+            # update selected total size for every modal
+            for _modal in self.modals:
+                if _modal in self.clients[idx].modals:
+                    selected_total_size[_modal] += len(self.clients[idx])
 
         message = f"[Round: {str(self._round).zfill(4)}] ...{len(sampled_client_indices)} clients are selected and updated (with total sample size: {str(selected_total_size)})!"
         print(message); logging.info(message)
@@ -280,7 +315,7 @@ class Server(object):
             # print (_modal)
             averaged_weights = OrderedDict()
             count = 0
-            for it, idx in tqdm(enumerate(sampled_client_indices), leave=False):
+            for it, idx in enumerate(sampled_client_indices):
                 # print ("check length of client models", len(self.clients[idx].models)) # 2
                 # parallel training
                 # local_weights = self.clients[idx].models[model_index].state_dict()
@@ -291,16 +326,22 @@ class Server(object):
                         # print (local_weights.keys())
                         # if it == 0:
                         if count == 0: # is empty
-                            averaged_weights[key] = coefficients[it] * local_weights[key]
+                            averaged_weights[key] = coefficients[_modal][it] * local_weights[key]
                         else:
-                            averaged_weights[key] += coefficients[it] * local_weights[key]
+                            averaged_weights[key] += coefficients[_modal][it] * local_weights[key]
                     count += 1
             # print (_modal)
-            if count > 0: self.models[_modal].load_state_dict(averaged_weights)
-
-            message = f"[Round: {str(self._round).zfill(4)}] Modal: {_modal} ...updated weights of {count} clients are successfully averaged!"
-            print(message); logging.info(message)
-            del message; gc.collect()
+            if count > 0: 
+                # ema
+                if self.use_ema: self.ema_models[_modal].update(self.models[_modal])
+                self.models[_modal].load_state_dict(averaged_weights)
+                message = f"[Round: {str(self._round).zfill(4)}] MODAL: {str(_modal).rjust(6, ' ')} ...updated weights of {count} clients are successfully averaged!"
+                print(message); logging.info(message)
+                del message; gc.collect()
+            else:
+                message = f"[Round: {str(self._round).zfill(4)}] MODAL: {str(_modal).rjust(6, ' ')} ...not averaged in this round (no clients)!"
+                print(message); logging.info(message)
+                del message; gc.collect()
     
     def evaluate_selected_models(self, sampled_client_indices):
         """Call "client_evaluate" function of each selected client."""
@@ -352,10 +393,17 @@ class Server(object):
         #         self.evaluate_selected_models(sampled_client_indices)
 
         # calculate averaging coefficient of weights
-        mixing_coefficients = [len(self.clients[idx]) / selected_total_size for idx in sampled_client_indices]
+        mixing_coefficients = {}
+        for _modal in self.modals:
+            mixing_coefficients[_modal] = []
+            for idx in sampled_client_indices:
+                if _modal in self.clients[idx].modals:
+                    mixing_coefficients[_modal].append(len(self.clients[idx]) / selected_total_size[_modal])
+                else:
+                    mixing_coefficients[_modal].append(0)
 
         # average each updated model parameters of the selected clients and update the global model
-        self.average_model(sampled_client_indices, mixing_coefficients)
+        return sampled_client_indices, mixing_coefficients
     
     def train_global_model(self):
         """Update the global model using the global holdout training dataset (self.train_dataloader)."""
@@ -390,8 +438,14 @@ class Server(object):
                     optimizers[_modal].step() 
 
                 if self.device == "cuda": torch.cuda.empty_cache()
+
         for _model in self.models.values():
             _model.to("cpu")
+        
+        # ema training
+        if self.use_ema:
+            for _modal in self.modals:
+                self.ema_models[_modal].update(self.models[_modal])
         
         message = f"[Round: {str(self._round).zfill(4)}] ...updated global model using the global holdout training dataset!"
         print(message); logging.info(message)
@@ -399,7 +453,13 @@ class Server(object):
 
     def evaluate_global_model(self):
         """Evaluate the global model using the global holdout dataset (self.data)."""
-        for _model in self.models.values():
+        for _modal in self.modals:
+            if self.use_ema:
+                self.eval_models[_modal] = self.ema_models[_modal].ema
+            else:
+                self.eval_models[_modal] = self.models[_modal]
+
+        for _model in self.eval_models.values():
             _model.eval()
             _model.to(self.device)
 
@@ -409,13 +469,13 @@ class Server(object):
                 data = {}
                 if self.learn_strategy in ["N", "X"]:
                     for _modal, _modal_index in zip(self.modals, self.modals_index):
-                        data[_modal] = inputs[_modal_index * 2].float().to(self.device)
+                        data[_modal] = inputs[_modal_index * 2].float().to(self.device) # inputs[0], inputs[2]
                 else:
                     raise Exception("Not implemented.")
                 labels = labels.long().to(self.device)
                 # foreward pass through all models
                 for idx, _modal in enumerate(self.modals):
-                    outputs = self.models[_modal](data[_modal])
+                    outputs = self.eval_models[_modal](data[_modal])
                     test_losses[idx] += eval(self.criterion)()(outputs, labels).item()
                 
                     predicted = outputs.argmax(dim=1, keepdim=True)
@@ -423,11 +483,11 @@ class Server(object):
                 
                 if self.device == "cuda": torch.cuda.empty_cache()
         # move all models to cpu
-        for _model in self.models.values():
+        for _model in self.eval_models.values():
             _model.to("cpu")
 
         test_losses = [test_loss / len(self.test_dataloader) for test_loss in test_losses]
-        test_accuracys = [correct / len(self.data) for correct in corrects]
+        test_accuracys = [correct / len(self.test_data) for correct in corrects]
 
         return test_losses, test_accuracys
 
@@ -437,32 +497,36 @@ class Server(object):
         for r in range(self.num_rounds):
             self._round = r + 1
             
-            self.train_federated_model()
-            if self.learn_strategy != 'N':
+            if self.is_central:
                 self.train_global_model()
+            else:
+                sampled_client_indices, mixing_coefficients = self.train_federated_model()
+                self.average_model(sampled_client_indices, mixing_coefficients)
+                if self.learn_strategy != 'N':
+                    self.train_global_model()
             # TODO: ema model
             test_loss, test_accuracy = self.evaluate_global_model()
             
             self.results['loss'].append(test_loss)
             self.results['accuracy'].append(test_accuracy)
 
-            for model_idx, _model in enumerate(self.models.values()):
+            for idx, _modal in enumerate(self.modals):
                 self.writer.add_scalars(
                     'Loss',
-                    {f"[{self.dataset_name}]_{_model.name} C_{self.fraction}, E_{self.local_epochs}, B_{self.batch_size}, IID_{self.iid}": test_loss[model_idx]},
+                    {f"[{self.dataset_name}]_{self.models[_modal].name} C_{self.fraction}, E_{self.local_epochs}, B_{self.batch_size}, IID_{self.iid}": test_loss[idx]},
                     self._round
                     )
                 self.writer.add_scalars(
                     'Accuracy', 
-                    {f"[{self.dataset_name}]_{_model.name} C_{self.fraction}, E_{self.local_epochs}, B_{self.batch_size}, IID_{self.iid}": test_accuracy[model_idx]},
+                    {f"[{self.dataset_name}]_{self.models[_modal].name} C_{self.fraction}, E_{self.local_epochs}, B_{self.batch_size}, IID_{self.iid}": test_accuracy[idx]},
                     self._round
                     )
                 
                 message = f"[Round: {str(self._round).zfill(4)}] Evaluate global model's performance...!\
                     \n\t[Server] ...finished evaluation!\
-                    \n\t=> Modal: {self.modals[model_idx]}\
-                    \n\t=> Loss: {test_loss[model_idx]:.4f}\
-                    \n\t=> Accuracy: {100. * test_accuracy[model_idx]:.2f}%\n"            
+                    \n\t=> Modal: {_modal}\
+                    \n\t=> Loss: {test_loss[idx]:.4f}\
+                    \n\t=> Accuracy: {100. * test_accuracy[idx]:.2f}%\n"            
                 print(message); logging.info(message)
                 del message; gc.collect()
         self.transmit_model()

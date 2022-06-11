@@ -157,7 +157,7 @@ class FixMatchLoss(torch.nn.CrossEntropyLoss):
         pseudo_label = torch.softmax(input_w.detach()/self.T, dim=-1)
         max_probs, targets_u = torch.max(pseudo_label, dim=-1) # [bs, 1]
         mask = max_probs.ge(self.threshold).float() # prob of max_probs > threshold
-        return F.cross_entropy(input_s, targets_u, self.reduction) * mask
+        return F.cross_entropy(input_s, targets_u, reduction='mean') * mask
 
 
 #####################################################################

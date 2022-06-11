@@ -108,17 +108,18 @@ class Client(object):
                 if self.learn_strategy == 'X':
                     for _modal in self.modals:
                         loss += eval(self.criterion)()(outputs[_modal], labels)
-                if self.learn_strategy == 'U':
+                if self.learn_strategy in ["F", "U"]:
                     for _modal in self.modals:
                         outputs[_modal] = de_interleave(outputs[_modal], 2)
-                        loss += FixMatchLoss()(outputs.values[0].chunk(2)[0], outputs.values[0].chunk(2)[1])
-                    if self.num_modals == 2:
-                        loss += MultiMatchLoss()(outputs.values[0].chunk(2)[0], outputs.values[0].chunk(2)[1], 
-                                                        outputs.values[1].chunk(2)[0], outputs.values[1].chunk(2)[1])
+                        loss += FixMatchLoss()(outputs[_modal].chunk(2)[0], outputs[_modal].chunk(2)[1])
+                    if self.learn_strategy == "U":
+                        loss += MultiMatchLoss()(outputs.values()[0].chunk(2)[0], outputs.values()[0].chunk(2)[1], 
+                                                outputs.values()[1].chunk(2)[0], outputs.values()[1].chunk(2)[1])
                     # display
                     # if display: print("Id: {} Epoch: {} / {} Iter: {} / {} Loss: {:.2f}".format(self.id, e, self.local_epoch, idx, len(self.dataloader), loss.data.cpu().numpy()), end='\r')
                 loss.backward()
-                optimizers[_modal].step()
+                for _modal in self.modals:
+                    optimizers[_modal].step()
 
                 if self.device == "cuda": torch.cuda.empty_cache()
 

@@ -2,7 +2,6 @@ global_config:
   seed: 5959
   device: "cuda"
   is_mp: False 
-  # is_para 
   use_ema: False # use exponential moving average
   ema_decay: 0.999
 ---
@@ -23,7 +22,7 @@ clients_config:
     - ["RGB", "Depth"]
     - ["RGB"]
     - ["Depth"]
-  clients_learn_strategy: ["X", "X", "X"] 
+  clients_learn_strategy: ["N", "N", "N"] 
   # clients_nodes: [6, 6, 6] # number of nodes for each combination, [A, B], [A], [B]
 ---
 fed_config:
@@ -65,6 +64,6 @@ model_config:
 ---
 log_config:
   log_path: "./log/"
-  log_name:  "baseline-combines-resnet18.log"
+  log_name:  "baseline-central-resnet18.log"
   tb_port: 5258
   tb_host: "0.0.0.0"

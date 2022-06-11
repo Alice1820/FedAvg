@@ -160,8 +160,7 @@ def create_ntu_datasets(data_path, num_clients, num_server_subjects=0, seed=0):
     assert len(clients_subjects) % num_clients == 0 # train_subjects can be 
     shards = len(clients_subjects) // num_clients
     
-    random.seed(seed)
-    clients_subjects = shuffle(clients_subjects)
+    clients_subjects = shuffle(clients_subjects, random_state=seed)
     split_subjects = [clients_subjects[x:x+shards] for x in range(0, len(clients_subjects), shards)]
     # print(split_subjects)
     local_datasets = [
