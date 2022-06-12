@@ -16,7 +16,7 @@ from torchvision import transforms
 
 from sklearn.utils import shuffle
 
-from .datasets.NTU_RGBD import NTU_X, NTU_U, get_ntu_rgbd_train, get_ntu_rgbd_test
+from .datasets.NTU_RGBD import get_ntu_rgbd_train, get_ntu_rgbd_test
 
 logger = logging.getLogger(__name__)
 

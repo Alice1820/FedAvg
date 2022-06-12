@@ -196,7 +196,7 @@ def depth_transform(np_clip):
     return np_clip
 
 # %%
-class NTU_X(Dataset):
+class NTU_60_X(Dataset):
     r""" Supervised RGBD Dataset
         Args:
             root_dir (string): Directory where data is.
@@ -265,7 +265,78 @@ class NTU_X(Dataset):
             sample['dep'] = self.depTransform(sample['dep'])
         return sample['rgb'], sample['dep'], sample['label']
 
-class NTU_U(NTU_X):
+class NTU_120_X(Dataset):
+    r""" Supervised RGBD Dataset
+        Args:
+            root_dir (string): Directory where data is.
+            subjects (list): List of subject number
+            
+    """
+    def __init__(self, root_dir='/data0/xfzhang/data/NTU_RGBD_60',  # /data0/xifan/NTU_RGBD_60
+                 stage='train',
+                 subjects=[],
+                 temTransform=None,
+                 spaTransform=None,
+                 depTransform=None,
+                 vid_len=(8, 8)):
+        # check subjects list is not empty
+        assert len(subjects) != 0
+        
+        # basename
+        self.basename_rgb = [os.path.join(root_dir, 'NTU_RGBD_60', 'nturgbd_rgb/avi_310x256_30'), 
+                                os.path.join(root_dir, 'NTU_RGBD_120', 'nturgbd_rgb/avi_310x256_30'),]
+        self.basename_dep = [os.path.join(root_dir, 'NTU_RGBD_60', 'nturgbd_depth_masked/dep_310x256'),
+                                os.path.join(root_dir, 'NTU_RGBD_120', 'nturgbd_depth_masked/dep_310x256')]
+    
+        if stage == 'train':
+            # subjects = [1, 4, 8, 13, 15, 16, 17, 18, 19, 25, 27, 28, 31, 34, 35, 38, 2, 5, 9, 14] # 20 subjects
+            self.subjects = subjects # 20 subjects
+        elif stage == 'test':
+            self.subjects = [3, 6, 7, 10, 11, 12, 20, 21, 22, 23, 24, 26, 29, 30, 32, 33, 36, 37, 39, 40]
+        else:
+            raise Exception('wrong stage: ' + stage)
+
+        self.vid_len = vid_len # (8, 8)
+        self.subjects = subjects
+        self.rgb_list = []
+        self.dep_list = []
+        self.labels = []
+
+        self.rgb_list += [os.path.join(self.basename_rgb, f) for f in sorted(os.listdir(self.basename_rgb)) if
+                        f.split(".")[-1] == "avi" and int(f[9:12]) in self.subjects]
+        self.dep_list += [os.path.join(self.basename_dep, f) for f in sorted(os.listdir(self.basename_dep)) if 
+                        int(f[9:12]) in self.subjects]
+        self.labels += [int(f[17:20]) for f in sorted(os.listdir(self.basename_rgb)) if
+                    f.split(".")[-1] == "avi" and int(f[9:12]) in self.subjects]
+
+        self.rgb_list, self.dep_list, self.labels = shuffle(self.rgb_list, self.dep_list, self.labels)
+        self.temTransform = temTransform
+        self.spaTransform = spaTransform
+        self.depTransform = depTransform
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, idx):
+
+        rgbpath = self.rgb_list[idx]
+        deppath = self.dep_list[idx]
+        label = self.labels[idx]
+        # if self.args.modality == "rgb" or self.args.modality == "both":
+        video = load_video(rgbpath)
+        depth = load_depth(deppath)
+
+        sample = {'rgb': video, 'dep': depth,  'label': label - 1}
+        if self.temTransform:
+            sample = self.temTransform(sample)
+        # print (sample['rgb'][0].size, len(sample['rgb']))
+        if self.spaTransform:
+            sample['rgb'] = self.spaTransform(sample['rgb'])
+        if self.depTransform:
+            sample['dep'] = self.depTransform(sample['dep'])
+        return sample['rgb'], sample['dep'], sample['label']
+
+class NTU_60_U(NTU_60_X):
     r""" Unsupervised RGBD Dataset
         Args:
             root_dir (string): Directory where data is.
@@ -281,7 +352,7 @@ class NTU_U(NTU_X):
                  depTransform_w=None,
                  depTransform_s=None,
                  vid_len=(8, 8)):
-        super(NTU_U, self).__init__(root_dir=root_dir, 
+        super(NTU_60_U, self).__init__(root_dir=root_dir, 
                                     stage=stage, 
                                     subjects=subjects,
                                     temTransform=temTransform, 
@@ -361,7 +432,7 @@ def get_ntu_rgbd_train(root_dir='/data0/xfzhang/data/NTU_RGBD_60/', num_segments
 
     temTransform_labeled = transforms.Compose([TemAugCrop(), TemNormalizeLen((num_segments, num_segments))])
     
-    train_dataset = NTU_U(root_dir=root_dir, stage='train', subjects=subjects, 
+    train_dataset = NTU_60_U(root_dir=root_dir, stage='train', subjects=subjects, 
                         temTransform=temTransform_labeled, 
                         spaTransform_w=spaTransform_w, spaTransform_s=spaTransform_s, 
                         depTransform_w=depTransform_w, depTransform_s=depTransform_s)    
@@ -388,7 +459,7 @@ def get_ntu_rgbd_test(root_dir='/data0/xfzhang/data/NTU_RGBD_60/', num_segments=
 
     temTransform_val = transforms.Compose([TemCenterCrop(), TemNormalizeLen((num_segments, num_segments))])
 
-    test_dataset = NTU_U(root_dir=root_dir, stage='test', subjects=subjects, 
+    test_dataset = NTU_60_U(root_dir=root_dir, stage='test', subjects=subjects, 
                         temTransform=temTransform_val, 
                         spaTransform_w=spaTransform_val, spaTransform_s=spaTransform_val, 
                         depTransform_w=depTransform_val, depTransform_s=depTransform_val)

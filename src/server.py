@@ -438,7 +438,7 @@ class Server(object):
                     loss = eval(self.criterion)()(outputs, labels)
                     loss.backward()
                     # gradient clipping
-                    nn.utils.clip_grad_norm_(self.model[_modal].parameters(), max_norm=20, norm_type=2)
+                    nn.utils.clip_grad_norm_(self.models[_modal].parameters(), max_norm=20, norm_type=2)
                     optimizers[_modal].step() 
 
                 if self.device == "cuda": torch.cuda.empty_cache()
@@ -463,11 +463,12 @@ class Server(object):
             else:
                 self.eval_models[_modal] = self.models[_modal]
 
+        test_losses, corrects = {}, {}
         for _model in self.eval_models.values():
             _model.eval()
             _model.to(self.device)
+            test_losses[_modal] = corrects[_modal] =  0
 
-        test_losses, corrects = [0 for _ in self.models.keys()], [0 for _ in self.models.keys()]
         with torch.no_grad():
             for inputs, labels in tqdm(self.test_dataloader):
                 data = {}
@@ -478,20 +479,21 @@ class Server(object):
                     raise Exception("Not implemented.")
                 labels = labels.long().to(self.device)
                 # foreward pass through all models
-                for idx, _modal in enumerate(self.modals):
+                for _modal in self.modals:
                     outputs = self.eval_models[_modal](data[_modal])
-                    test_losses[idx] += eval(self.criterion)()(outputs, labels).item()
+                    test_losses[_modal] += eval(self.criterion)()(outputs, labels).item()
                 
                     predicted = outputs.argmax(dim=1, keepdim=True)
-                    corrects[idx] += predicted.eq(labels.view_as(predicted)).sum().item()
+                    corrects[_modal] += predicted.eq(labels.view_as(predicted)).sum().item()
                 
                 if self.device == "cuda": torch.cuda.empty_cache()
         # move all models to cpu
         for _model in self.eval_models.values():
             _model.to("cpu")
 
-        test_losses = [test_loss / len(self.test_dataloader) for test_loss in test_losses]
-        test_accuracys = [correct / len(self.test_data) for correct in corrects]
+        for _modal in self.modals:
+            test_losses[_modal] =  test_losses / len(self.test_dataloader)
+            test_accuracys = corrects[_modal] / len(self.test_data)
 
         return test_losses, test_accuracys
 
@@ -514,23 +516,23 @@ class Server(object):
             self.results['loss'].append(test_loss)
             self.results['accuracy'].append(test_accuracy)
 
-            for idx, _modal in enumerate(self.modals):
+            for _modal in self.modals:
                 self.writer.add_scalars(
                     'Loss',
-                    {f"[{self.dataset_name}]_{self.models[_modal].name} C_{self.fraction}, E_{self.local_epochs}, B_{self.batch_size}, IID_{self.iid}": test_loss[idx]},
+                    {f"[{self.dataset_name}]_{self.models[_modal].name} C_{self.fraction}, E_{self.local_epochs}, B_{self.batch_size}, IID_{self.iid}": test_loss[_modal]},
                     self._round
                     )
                 self.writer.add_scalars(
                     'Accuracy', 
-                    {f"[{self.dataset_name}]_{self.models[_modal].name} C_{self.fraction}, E_{self.local_epochs}, B_{self.batch_size}, IID_{self.iid}": test_accuracy[idx]},
+                    {f"[{self.dataset_name}]_{self.models[_modal].name} C_{self.fraction}, E_{self.local_epochs}, B_{self.batch_size}, IID_{self.iid}": test_accuracy[_modal]},
                     self._round
                     )
                 
                 message = f"[Round: {str(self._round).zfill(4)}] Evaluate global model's performance...!\
                     \n\t[Server] ...finished evaluation!\
                     \n\t=> Modal: {_modal}\
-                    \n\t=> Loss: {test_loss[idx]:.4f}\
-                    \n\t=> Accuracy: {100. * test_accuracy[idx]:.2f}%\n"            
+                    \n\t=> Loss: {test_loss[_modal]:.4f}\
+                    \n\t=> Accuracy: {100. * test_accuracy[_modal]:.2f}%\n"            
                 print(message); logging.info(message)
                 del message; gc.collect()
         self.transmit_model()

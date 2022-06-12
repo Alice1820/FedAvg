@@ -17,6 +17,8 @@ from src.utils import launch_tensor_board
 if __name__ == "__main__":
     # read configuration file
     assert len(sys.argv) > 1
+    task_name = sys.argv[1].split('/')[2]
+
     with open('{}'.format(sys.argv[1])) as c:
         configs = list(yaml.load_all(c, Loader=yaml.FullLoader))
     global_config = configs[0]["global_config"]
@@ -38,7 +40,7 @@ if __name__ == "__main__":
     log_config["log_path"] = os.path.join(log_config["log_path"], str(datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S")))
 
     # initiate TensorBaord for tracking losses and metrics
-    writer = SummaryWriter(log_dir=log_config["log_path"], filename_suffix="FL")
+    writer = SummaryWriter(log_dir=log_config["log_path"], filename_suffix="-FL-{}".format(task_name))
     tb_thread = threading.Thread(
         target=launch_tensor_board,
         args=([log_config["log_path"], log_config["tb_port"], log_config["tb_host"]])
