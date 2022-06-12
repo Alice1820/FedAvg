@@ -125,7 +125,9 @@ class Server(object):
             torch.manual_seed(self.seed)
             # init_single_net(model, **self.init_config)
             # self.models.append(model)
+            # self.models[modal] = nn.DataParallel(model)
             self.models[modal] = model
+
             message = f"[Round: {str(self._round).zfill(4)}] ...successfully initialized backbone {backbone_config}"
             print (message); gc.collect()
 
@@ -435,6 +437,8 @@ class Server(object):
                     torch.cuda.synchronize()
                     loss = eval(self.criterion)()(outputs, labels)
                     loss.backward()
+                    # gradient clipping
+                    nn.utils.clip_grad_norm_(self.model[_modal].parameters(), max_norm=20, norm_type=2)
                     optimizers[_modal].step() 
 
                 if self.device == "cuda": torch.cuda.empty_cache()

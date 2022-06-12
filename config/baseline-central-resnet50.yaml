@@ -2,12 +2,11 @@ global_config:
   seed: 5959
   device: "cuda"
   is_mp: False 
-  # is_para 
   use_ema: False # use exponential moving average
   ema_decay: 0.999
 ---
 data_config:
-  data_path: "/data0/xfzhang/data/NTU_RGBD_60/" # root_dir
+  data_path: "/mnt/hdd/xifan/data/NTU_RGBD_60/" # root_dir
   dataset_name: "NTU_RGBD"
   modals: ["RGB", "Depth"]
   num_shards: 200
@@ -23,17 +22,17 @@ clients_config:
     - ["RGB", "Depth"]
     - ["RGB"]
     - ["Depth"]
-  clients_learn_strategy: ["U", "F", "F"] 
+  clients_learn_strategy: ["N", "N", "N"] 
   # clients_nodes: [6, 6, 6] # number of nodes for each combination, [A, B], [A], [B]
 ---
 fed_config:
   C: 0.5 # fraction
-  SS: 6 # server subjects
+  SS: 6 # central subjects
   K: 30 # numbers of clients
   R: 1000 # rounds
   E: 1 # epochs
   SE: 1 # global_epochs
-  B: 24 # batchsize
+  B: 8 # batchsize
   criterion: torch.nn.CrossEntropyLoss
   optimizer: torch.optim.SGD
 ---
@@ -44,7 +43,7 @@ optim_config:
 init_config:
   init_type: "xavier"
   init_gain: 1.0
-  gpu_ids: [0, 1]
+  gpu_ids: [0]
 ---
 model_config: 
   num_modals: 2
@@ -53,18 +52,18 @@ model_config:
     -
         modal: "RGB"
         name: TSN
-        base_model: "resnet18" # bs: 4~8 per gpu
+        base_model: "resnet50" # bs: 16 per gpu
         num_class: 60
         img_feature_dim: 256
     -   
         modal: "Depth"
         name: TSN
-        base_model: "resnet18"
+        base_model: "resnet50"
         num_class: 60
-        img_feature_dim: 256
+        img_feature_dim: 256  
 ---
 log_config:
   log_path: "./log/"
-  log_name:  "baseline-multimatch-resnet18.log"
-  tb_port: 5256
+  log_name:  "baseline-central-resnet18.log"
+  tb_port: 5258
   tb_host: "0.0.0.0"
