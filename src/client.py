@@ -126,7 +126,7 @@ class Client(object):
 
                 for _modal in self.modals:
                     # gradient clipping
-                    nn.utils.clip_grad_norm_(self.model[_modal].parameters(), max_norm=20, norm_type=2)
+                    nn.utils.clip_grad_norm_(self.models[_modal].parameters(), max_norm=20, norm_type=2)
                     optimizers[_modal].step()
 
                 if self.device == "cuda": torch.cuda.empty_cache()

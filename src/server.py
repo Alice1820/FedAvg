@@ -203,7 +203,7 @@ class Server(object):
 
     def setup_clients(self, **client_config):
         """Set up each client."""
-        for k, client in tqdm(enumerate(self.clients), leave=False):
+        for client in enumerate(self.clients):
             client.setup(**client_config)
         
         message = f"[Round: {str(self._round).zfill(4)}] ...successfully finished setup of all {str(self.num_clients)} clients!"
@@ -463,11 +463,11 @@ class Server(object):
             else:
                 self.eval_models[_modal] = self.models[_modal]
 
-        test_losses, corrects = {}, {}
+        test_losses, test_accuracys = {}, {}
         for _model in self.eval_models.values():
             _model.eval()
             _model.to(self.device)
-            test_losses[_modal] = corrects[_modal] =  0
+            test_losses[_modal] = test_accuracys[_modal] =  0
 
         with torch.no_grad():
             for inputs, labels in tqdm(self.test_dataloader):
@@ -484,7 +484,7 @@ class Server(object):
                     test_losses[_modal] += eval(self.criterion)()(outputs, labels).item()
                 
                     predicted = outputs.argmax(dim=1, keepdim=True)
-                    corrects[_modal] += predicted.eq(labels.view_as(predicted)).sum().item()
+                    test_accuracys[_modal] += predicted.eq(labels.view_as(predicted)).sum().item()
                 
                 if self.device == "cuda": torch.cuda.empty_cache()
         # move all models to cpu
@@ -492,8 +492,8 @@ class Server(object):
             _model.to("cpu")
 
         for _modal in self.modals:
-            test_losses[_modal] =  test_losses / len(self.test_dataloader)
-            test_accuracys = corrects[_modal] / len(self.test_data)
+            test_losses[_modal] =  test_losses[_modal]  / len(self.test_dataloader)
+            test_accuracys[_modal]  = test_accuracys[_modal] / len(self.test_data)
 
         return test_losses, test_accuracys
 

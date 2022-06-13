@@ -2,6 +2,7 @@ global_config:
   seed: 5959
   device: "cuda"
   is_mp: False 
+  num_workers: 4
   # is_para 
   use_ema: False # use exponential moving average
   ema_decay: 0.999
@@ -27,7 +28,7 @@ clients_config:
   # clients_nodes: [6, 6, 6] # number of nodes for each combination, [A, B], [A], [B]
 ---
 fed_config:
-  C: 0.5 # fraction
+  C: 0.1 # fraction
   SS: 6 # server subjects
   K: 30 # numbers of clients
   R: 1000 # rounds
@@ -65,6 +66,6 @@ model_config:
 ---
 log_config:
   log_path: "./log/"
-  log_name:  "baseline-multimatch-resnet18.log"
+  log_name:  "semi-multimatch-resnet18.log"
   tb_port: 5256
   tb_host: "0.0.0.0"
