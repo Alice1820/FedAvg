@@ -145,7 +145,7 @@ class FixMatchLoss(torch.nn.CrossEntropyLoss):
     label_smoothing: float
 
     def __init__(self, weight: Optional[Tensor] = None, size_average=None, ignore_index: int = -100,
-                 reduce=None, reduction: str = 'mean', label_smoothing: float = 0.0, threshold: float = 0.95, T: float = 1) -> None:
+                 reduce=None, reduction: str = 'mean', label_smoothing: float = 0.0, threshold: float = 0.5, T: float = 1) -> None:
         super(FixMatchLoss, self).__init__(weight, size_average, reduce, reduction)
         self.ignore_index = ignore_index
         self.label_smoothing = label_smoothing
@@ -157,7 +157,7 @@ class FixMatchLoss(torch.nn.CrossEntropyLoss):
         pseudo_label = torch.softmax(input_w.detach()/self.T, dim=-1)
         max_probs, targets_u = torch.max(pseudo_label, dim=-1) # [bs, 1]
         mask = max_probs.ge(self.threshold).float() # prob of max_probs > threshold
-        return (F.cross_entropy(input_s, targets_u, reduction='none') * mask).mean()
+        return mask.mean(), (F.cross_entropy(input_s, targets_u, reduction='none') * mask).mean()
 
 
 #####################################################################
@@ -290,7 +290,7 @@ class MultiMatchLoss(torch.nn.CrossEntropyLoss):
     label_smoothing: float
 
     def __init__(self, weight: Optional[Tensor] = None, size_average=None, ignore_index: int = -100,
-                 reduce=None, reduction: str = 'mean', label_smoothing: float = 0.0, threshold: float = 0.95, T: float = 1) -> None:
+                 reduce=None, reduction: str = 'mean', label_smoothing: float = 0.0, threshold: float = 0.5, T: float = 1) -> None:
         super(MultiMatchLoss, self).__init__(weight, size_average, reduce, reduction)
         self.ignore_index = ignore_index
         self.label_smoothing = label_smoothing
@@ -305,10 +305,11 @@ class MultiMatchLoss(torch.nn.CrossEntropyLoss):
         mask_a = max_probs_a.ge(self.threshold).float() # prob of max_probs > threshold
         # Modal B
         pseudo_label_b = torch.softmax(input_b_w.detach()/self.T, dim=-1)
-        max_probs_b, targets_b_u = torch.max(pseudo_label_b, dim=-1) # [bs, 1]
+        max_probs_b, targets_b_u = torch.max(pseudo_label_b, dim=-1) # [bs, 1], [bs, 1]
         mask_b = max_probs_b.ge(self.threshold).float() # prob of max_probs > threshold
 
-        return (F.cross_entropy(input_a_s, targets_a_u, reduction='none') * mask_a).mean()+ \
-                (F.cross_entropy(input_b_s, targets_b_u, reduction='none') * mask_b).mean() + \
-                (F.cross_entropy(input_a_s, targets_b_u, reduction='none') * mask_b).mean() + \
-                (F.cross_entropy(input_b_s, targets_a_u, reduction='none') * mask_a).mean()
+        multimatch_a = (F.cross_entropy(input_a_s, targets_a_u, reduction='none') * mask_a).mean()+ \
+                    (F.cross_entropy(input_a_s, targets_b_u, reduction='none') * mask_b).mean()
+        multimatch_b = (F.cross_entropy(input_b_s, targets_b_u, reduction='none') * mask_b).mean() + \
+                    (F.cross_entropy(input_b_s, targets_a_u, reduction='none') * mask_a).mean()
+        return mask_a.mean(), mask_b.mean(), multimatch_a, multimatch_b

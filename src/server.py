@@ -165,7 +165,10 @@ class Server(object):
         # prepare hold-out dataset for evaluation
         self.train_data = global_dataset
         self.test_data = test_dataset
-        self.global_dataloader = DataLoader(global_dataset, batch_size=self.batch_size, shuffle=False, num_workers=8)
+        if self.learn_strategy == "X":
+            self.global_dataloader = DataLoader(global_dataset, batch_size=self.batch_size*self.mu, shuffle=True, num_workers=8)
+        else:
+            self.global_dataloader = DataLoader(global_dataset, batch_size=self.batch_size, shuffle=True, num_workers=8)
         self.test_dataloader = DataLoader(test_dataset, batch_size=self.batch_size*self.mu, shuffle=False, num_workers=8)
         
         self.modals_index = range(len(self.modals))
@@ -239,7 +242,7 @@ class Server(object):
             # send the global model to selected clients
             assert self._round != 0
 
-            for k, idx in tqdm(enumerate(sampled_client_indices), leave=False):
+            for idx in sampled_client_indices:
                 for _modal in self.clients[idx].modals:
                     self.clients[idx].models[_modal] = copy.deepcopy(self.models[_modal])
                     # client.models = [nn.DataParallel(_model) for _model in client.models]
@@ -262,7 +265,7 @@ class Server(object):
         sampled_client_indices = sorted(np.random.choice(a=[i for i in range(self.num_clients)], size=num_sampled_clients, replace=False).tolist())
 
         for idx in sampled_client_indices:
-            message = f"[Round: {str(self._round).zfill(4)}] Sampled Client NO: {str(idx).zfill(4)}, DATA: {str(len(self.clients[idx].dataset)).rjust(6, ' ')}, MODALS: {str(self.clients[idx].modals).rjust(20, ' ')},  LEARN: {self.clients[idx].learn_strategy.rjust(4, ' ')} ...!"
+            message = f"[Round: {str(self._round).zfill(4)}] Sampled Client NO: {str(idx).zfill(4)}, DATA: {str(len(self.clients[idx].data)).rjust(6, ' ')}, MODALS: {str(self.clients[idx].modals).rjust(20, ' ')},  LEARN: {self.clients[idx].learn_strategy.rjust(4, ' ')} ...!"
             print(message); logging.info(message)
             del message; gc.collect()
 
@@ -278,9 +281,10 @@ class Server(object):
         selected_total_size = {}
         for _modal in self.modals:
             selected_total_size[_modal] = 0
-        for idx in tqdm(sampled_client_indices, leave=True):
+        # for idx in tqdm(sampled_client_indices, leave=True):
+        for idx in sampled_client_indices:
+            # print (self.learn_strategy, self.clients[idx].learn_strategy)
             if self.learn_strategy == 'N' and self.clients[idx].learn_strategy in ['F', 'M']:
-                # print ("jointly update selected clients")
                 self.clients[idx].client_joint_update()
             else:
                 self.clients[idx].client_update()
@@ -446,7 +450,7 @@ class Server(object):
                     loss = eval(self.criterion)()(outputs, labels)
                     loss.backward()
                     # gradient clipping
-                    nn.utils.clip_grad_norm_(self.models[_modal].parameters(), max_norm=20, norm_type=2)
+                    # nn.utils.clip_grad_norm_(self.models[_modal].parameters(), max_norm=20, norm_type=2)
                     optimizers[_modal].step() 
 
                 if self.device == "cuda": torch.cuda.empty_cache()
@@ -503,6 +507,14 @@ class Server(object):
             test_losses[_modal] =  test_losses[_modal]  / len(self.test_dataloader)
             test_accuracys[_modal]  = test_accuracys[_modal] / len(self.test_data)
 
+            message = f"[Round: {str(self._round).zfill(4)}] Evaluate global model's performance...!\
+                \n\t[Server] ...finished evaluation!\
+                \n\t=> Modal: {_modal}\
+                \n\t=> Loss: {test_losses[_modal]:.4f}\
+                \n\t=> Accuracy: {100. * test_accuracys[_modal]:.2f}%\n"            
+            print(message); logging.info(message)
+            del message; gc.collect()
+
         return test_losses, test_accuracys
 
     def fit(self):
@@ -511,14 +523,14 @@ class Server(object):
         for r in range(self.num_rounds):
             self._round = r + 1
             
+            if self.learn_strategy == 'X':
+                self.train_global_model()
+                test_loss, test_accuracy = self.evaluate_global_model()
             if not self.is_central:
                 sampled_client_indices, mixing_coefficients = self.train_federated_model()
                 self.average_model(sampled_client_indices, mixing_coefficients)
-            if self.learn_strategy == 'X':
-                self.train_global_model()
-
-            # TODO: ema model
-            test_loss, test_accuracy = self.evaluate_global_model()
+                # TODO: ema model
+                test_loss, test_accuracy = self.evaluate_global_model()
             
             self.results['loss'].append(test_loss)
             self.results['accuracy'].append(test_accuracy)
@@ -534,12 +546,4 @@ class Server(object):
                     {f"{self.learn_strategy}_[{self.clients_learn_strategy}]_{self.models[_modal].name} C_{self.fraction}, E_{self.local_epochs}, B_{self.batch_size}": test_accuracy[_modal]},
                     self._round
                     )
-                
-                message = f"[Round: {str(self._round).zfill(4)}] Evaluate global model's performance...!\
-                    \n\t[Server] ...finished evaluation!\
-                    \n\t=> Modal: {_modal}\
-                    \n\t=> Loss: {test_loss[_modal]:.4f}\
-                    \n\t=> Accuracy: {100. * test_accuracy[_modal]:.2f}%\n"            
-                print(message); logging.info(message)
-                del message; gc.collect()
         self.transmit_model()

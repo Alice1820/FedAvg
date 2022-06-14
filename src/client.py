@@ -86,14 +86,15 @@ class Client(object):
         # self.models = [nn.DataParallel(_model) for _model in self.models]
         # training
         for e in range(self.local_epoch):
-            for idx, (inputs, labels) in enumerate(self.dataloader):
+            p_bar = tqdm(range(len(self.dataloader)))
+            for inputs, labels in self.dataloader:
             # for inputs, labels in self.dataloader:
                 # check len(inputs) = 2*num_modals
                 data = {}
                 if self.learn_strategy == 'X':
                     for _modal, _modal_index in zip(self.modals, self.modals_index):
                         data[_modal] = inputs[_modal_index * 2].float().to(self.device)
-                elif self.learn_strategy in ['F', 'U']:
+                elif self.learn_strategy in ['F', 'M']:
                     for _modal, _modal_index in zip(self.modals, self.modals_index):
                         data[_modal] = interleave(
                         torch.cat((inputs[_modal_index * 2], inputs[_modal_index * 2 + 1])), 2).to(self.device)
@@ -103,35 +104,47 @@ class Client(object):
                 labels = labels.long().to(self.device)
                 # iterate over every model with same data
                 outputs = {}
-                loss = 0
+                loss = {}
+                loss_x = {}
+                loss_u = {}
+                mask = {}
+                outputs = {}
                 for _modal in self.modals:
+                    loss_x[_modal] = loss_u[_modal] = 0
+                    # forward
                     optimizers[_modal].zero_grad()
                     outputs[_modal] = self.models[_modal](data[_modal])
                     torch.cuda.synchronize()
-                if self.learn_strategy == 'X':
-                    for _modal in self.modals:
-                        loss = loss + eval(self.criterion)()(outputs[_modal], labels)
-                if self.learn_strategy in ["F", "U"]:
-                    for _modal in self.modals:
-                        outputs[_modal] = de_interleave(outputs[_modal], 2)
-                        outputs[_modal + 'w'], outputs[_modal + 's'] = outputs[_modal].chunk(2)
+                    # de_interleave outputs
+                    outputs[_modal] = de_interleave(outputs[_modal], 2)
+                    outputs[_modal + 'w'], outputs[_modal + 's'] = outputs[_modal].chunk(2)
                         # print (outputs[_modal + 'w'].shape) # torch.Size([16, 60]
-                        loss = loss + self.fixmatch(outputs[_modal + 'w'], outputs[_modal + 's'])
-                    if self.learn_strategy == "U":
-                        loss = loss + self.multimatch(outputs[self.modals[0] + 'w'], outputs[self.modals[0] + 's'], 
-                                                        outputs[self.modals[1] + 'w'], outputs[self.modals[1] + 's'])
-                    # display
-                    # if display: print("Id: {} Epoch: {} / {} Iter: {} / {} Loss: {:.2f}".format(self.id, e, self.local_epoch, idx, len(self.dataloader), loss.data.cpu().numpy()), end='\r')
-                # print (loss)
-                loss.backward()
-
+                    if self.learn_strategy == 'X':
+                        loss_x[_modal] = eval(self.criterion)()(outputs[_modal], labels)
+                    if self.learn_strategy == "F":
+                        mask[_modal], loss_u[_modal] = self.fixmatch(outputs[_modal + 'w'], outputs[_modal + 's'])
+                # jointly compute multimatch loss
+                if self.learn_strategy == "M":
+                    mask[self.modals[0]], mask[self.modals[1]], loss_u[self.modals[0]], loss_u[self.modals[1]] = \
+                            self.multimatch(outputs[self.modals[0] + 'w'], outputs[self.modals[0] + 's'], 
+                            outputs[self.modals[1] + 'w'], outputs[self.modals[1] + 's'])
+                # backward
                 for _modal in self.modals:
+                    loss[_modal] = loss_x[_modal] + loss_u[_modal]
+                    loss[_modal].backward()
                     # gradient clipping
                     nn.utils.clip_grad_norm_(self.models[_modal].parameters(), max_norm=20, norm_type=2)
                     optimizers[_modal].step()
 
+                descrip = "Train Client Id: {:3} ".format(self.id)
+                for _modal in self.modals:
+                    descrip += "LX_{}: {:.2f} LU_{}: {:.2f} M_{}: {:.2f} ".format(_modal, loss_x[_modal], _modal, loss_u[_modal], _modal, mask[_modal]*100)
+                p_bar.set_description(descrip)
+                p_bar.update()
+
                 if self.device == "cuda": torch.cuda.empty_cache()
 
+            p_bar.close()
         for _model in self.models.values():
             _model.to("cpu")
 
@@ -145,22 +158,37 @@ class Client(object):
             # self.parallel_models.append(nn.DataParallel(_model))
         # self.models = [nn.DataParallel(_model) for _model in self.models]
         # training
-        for e in range(self.local_epoch):
-            for _inputs_x, _inputs_u in zip(self.global_dataloader, self.dataloader):
-                inputs_x, labels = _inputs_x
+        global_iter = iter(self.global_dataloader)
+        for _ in range(self.local_epoch):
+            # initialize
+            p_bar = tqdm(range(len(self.dataloader)))
+
+            for _inputs_u in self.dataloader:
                 inputs_u, _ = _inputs_u
+                try:
+                    inputs_x, labels = global_iter.next()
+                except:
+                    global_iter = iter(self.global_dataloader)
+                    inputs_x, labels = global_iter.next()
             # for inputs, labels in self.dataloader:
                 # check len(inputs) = 2*num_modals
                 # print (torch.min(modala_w), torch.max(modala_w))
                 data = {}
                 for _modal, _modal_index in zip(self.modals, self.modals_index):
+                    # print (inputs_x[_modal_index * 2].shape)
+                    # print (inputs_u[_modal_index * 2].shape)
+                    # print (inputs_u[_modal_index * 2 + 1].shape)
                     data[_modal] = interleave(torch.cat((inputs_x[_modal_index * 2], inputs_u[_modal_index * 2], inputs_u[_modal_index * 2 + 1])), 2*self.mu+1).to(self.device)
                 labels = labels.long().to(self.device)
                 # iterate over every model with same data
+                loss = {}
+                loss_x = {}
+                loss_u = {}
+                mask = {}
                 outputs = {}
-                loss = 0
                 for _modal in self.modals:
                     optimizers[_modal].zero_grad()
+                    # loss[_modal] = loss_x[_modal] = loss_u[_modal]= mask[_modal] = 0
                     # forward
                     outputs[_modal] = self.models[_modal](data[_modal])
                     torch.cuda.synchronize()
@@ -168,21 +196,31 @@ class Client(object):
                     outputs[_modal + 'x'] = outputs[_modal][:self.batch_size]
                     outputs[_modal + 'w'], outputs[_modal + 's'] = outputs[_modal][self.batch_size:].chunk(2)
                     # print (outputs[_modal + 'w'].shape) # torch.Size([16, 60]
-                    loss = loss + eval(self.criterion)()(outputs[_modal + 'x'], labels)
-                    loss = loss + self.fixmatch(outputs[_modal + 'w'], outputs[_modal + 's'])
-                if self.learn_strategy == "U":
-                    loss = loss + self.multimatch(outputs[self.modals[0] + 'w'], outputs[self.modals[0] + 's'], 
+                    loss_x[_modal] = eval(self.criterion)()(outputs[_modal + 'x'], labels)
+                    if self.learn_strategy == "F":
+                        mask[_modal], loss_u[_modal] = self.fixmatch(outputs[_modal + 'w'], outputs[_modal + 's'])
+                if self.learn_strategy == "M":
+                    mask[self.modals[0]], mask[self.modals[1]], loss_u[self.modals[0]], loss_u[self.modals[1]] = \
+                                                    self.multimatch(outputs[self.modals[0] + 'w'], outputs[self.modals[0] + 's'], 
                                                     outputs[self.modals[1] + 'w'], outputs[self.modals[1] + 's'])
+
                 # print (loss)
-                loss.backward()
 
                 for _modal in self.modals:
+                    loss[_modal] = loss_x[_modal] + loss_u[_modal]
+                    loss[_modal].backward()
                     # gradient clipping
-                    nn.utils.clip_grad_norm_(self.models[_modal].parameters(), max_norm=20, norm_type=2)
+                    # nn.utils.clip_grad_norm_(self.models[_modal].parameters(), max_norm=20, norm_type=2)
                     optimizers[_modal].step()
 
+                # display
+                descrip = "Train Client Id: {:3} ".format(self.id)
+                for _modal in self.modals:
+                    descrip += "LX_{}: {:.2f} LU_{}: {:.2f} M_{}: {:.2f} ".format(_modal, loss_x[_modal], _modal, loss_u[_modal], _modal, mask[_modal]*100)
+                p_bar.set_description(descrip)
+                p_bar.update()
                 if self.device == "cuda": torch.cuda.empty_cache()
-
+            p_bar.close()
         for _model in self.models.values():
             _model.to("cpu")
 
