@@ -96,6 +96,8 @@ class Server(object):
         self.local_epochs = fed_config["E"]
         self.global_epoch = fed_config["SE"]
         self.batch_size = fed_config["B"]
+        self.mu = fed_config["mu"]
+        if self.learn_strategy == "SX": self.mu = 1 # server supervised learning
 
         # if self.learn_strategy != 'N': 
         #     assert self.num_server_subjects > 0
@@ -164,7 +166,7 @@ class Server(object):
         self.train_data = global_dataset
         self.test_data = test_dataset
         self.global_dataloader = DataLoader(global_dataset, batch_size=self.batch_size, shuffle=False, num_workers=8)
-        self.test_dataloader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False, num_workers=8)
+        self.test_dataloader = DataLoader(test_dataset, batch_size=self.batch_size*self.mu, shuffle=False, num_workers=8)
         
         self.modals_index = range(len(self.modals))
 
@@ -172,13 +174,15 @@ class Server(object):
             return;
 
         # assign dataset to each client
-        self.clients = self.create_clients(local_datasets, local_modals, local_modals_index, local_learn_strategy)
+        self.clients = self.create_clients(local_datasets=local_datasets, local_modals=local_modals, 
+                                        local_modals_index=local_modals_index, local_learn_strategy=local_learn_strategy)
 
         # configure detailed settings for client upate and 
         self.setup_clients(
             batch_size=self.batch_size,
             criterion=self.criterion, num_local_epochs=self.local_epochs,
             optimizer=self.optimizer, optim_config=self.optim_config,
+            mu = self.mu
             )
         
         # send the model skeleton to all clients
@@ -190,7 +194,7 @@ class Server(object):
         for k, dataset in enumerate(local_datasets):
             # ***create clients
             client = Client(client_id=k, local_data=dataset, local_modals=local_modals[k], local_modals_index=local_modals_index[k], 
-                            local_learn_strategy=local_learn_strategy[k], device=self.device)
+                            local_learn_strategy=local_learn_strategy[k], device=self.device, global_dataloader=self.global_dataloader)
             clients.append(client)
             message = f"[Round: {str(self._round).zfill(4)}] Created client: DATA: {str(len(dataset)).rjust(6, ' ')}, MODALS: {str(local_modals[k]).rjust(20, ' ')},  LEARN: {local_learn_strategy[k].rjust(4, ' ')}!"
             print(message); logging.info(message)
@@ -203,7 +207,7 @@ class Server(object):
 
     def setup_clients(self, **client_config):
         """Set up each client."""
-        for client in enumerate(self.clients):
+        for client in self.clients:
             client.setup(**client_config)
         
         message = f"[Round: {str(self._round).zfill(4)}] ...successfully finished setup of all {str(self.num_clients)} clients!"
@@ -258,7 +262,7 @@ class Server(object):
         sampled_client_indices = sorted(np.random.choice(a=[i for i in range(self.num_clients)], size=num_sampled_clients, replace=False).tolist())
 
         for idx in sampled_client_indices:
-            message = f"[Round: {str(self._round).zfill(4)}] Sampled Client NO: {str(idx).zfill(4)}, MODALS: {str(self.clients[idx].modals).rjust(20, ' ')},  LEARN: {self.clients[idx].learn_strategy.rjust(4, ' ')} ...!"
+            message = f"[Round: {str(self._round).zfill(4)}] Sampled Client NO: {str(idx).zfill(4)}, DATA: {str(len(self.clients[idx].dataset)).rjust(6, ' ')}, MODALS: {str(self.clients[idx].modals).rjust(20, ' ')},  LEARN: {self.clients[idx].learn_strategy.rjust(4, ' ')} ...!"
             print(message); logging.info(message)
             del message; gc.collect()
 
@@ -275,7 +279,11 @@ class Server(object):
         for _modal in self.modals:
             selected_total_size[_modal] = 0
         for idx in tqdm(sampled_client_indices, leave=True):
-            self.clients[idx].client_update()
+            if self.learn_strategy == 'N' and self.clients[idx].learn_strategy in ['F', 'M']:
+                # print ("jointly update selected clients")
+                self.clients[idx].client_joint_update()
+            else:
+                self.clients[idx].client_update()
             # update selected total size for every modal
             for _modal in self.modals:
                 if _modal in self.clients[idx].modals:
@@ -464,9 +472,9 @@ class Server(object):
                 self.eval_models[_modal] = self.models[_modal]
 
         test_losses, test_accuracys = {}, {}
-        for _model in self.eval_models.values():
-            _model.eval()
-            _model.to(self.device)
+        for _modal in self.modals:
+            self.models[_modal].eval()
+            self.models[_modal].to(self.device)
             test_losses[_modal] = test_accuracys[_modal] =  0
 
         with torch.no_grad():
@@ -503,13 +511,12 @@ class Server(object):
         for r in range(self.num_rounds):
             self._round = r + 1
             
-            if self.is_central:
-                self.train_global_model()
-            else:
+            if not self.is_central:
                 sampled_client_indices, mixing_coefficients = self.train_federated_model()
                 self.average_model(sampled_client_indices, mixing_coefficients)
-                if self.learn_strategy != 'N':
-                    self.train_global_model()
+            if self.learn_strategy == 'X':
+                self.train_global_model()
+
             # TODO: ema model
             test_loss, test_accuracy = self.evaluate_global_model()
             
@@ -518,13 +525,13 @@ class Server(object):
 
             for _modal in self.modals:
                 self.writer.add_scalars(
-                    'Loss',
-                    {f"[{self.dataset_name}]_{self.models[_modal].name} C_{self.fraction}, E_{self.local_epochs}, B_{self.batch_size}, IID_{self.iid}": test_loss[_modal]},
+                    'Loss/{}'.format(_modal),
+                    {f"{self.learn_strategy}_[{self.clients_learn_strategy}]_{self.models[_modal].name} C_{self.fraction}, E_{self.local_epochs}, B_{self.batch_size}": test_loss[_modal]},
                     self._round
                     )
                 self.writer.add_scalars(
-                    'Accuracy', 
-                    {f"[{self.dataset_name}]_{self.models[_modal].name} C_{self.fraction}, E_{self.local_epochs}, B_{self.batch_size}, IID_{self.iid}": test_accuracy[_modal]},
+                    'Accuracy/{}'.format(_modal), 
+                    {f"{self.learn_strategy}_[{self.clients_learn_strategy}]_{self.models[_modal].name} C_{self.fraction}, E_{self.local_epochs}, B_{self.batch_size}": test_accuracy[_modal]},
                     self._round
                     )
                 

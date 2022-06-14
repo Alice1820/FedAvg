@@ -27,7 +27,7 @@ class Client(object):
         device: Training machine indicator (e.g. "cpu", "cuda").
         __model: torch.nn instance as a local model.
     """
-    def __init__(self, client_id, local_data, local_modals, local_modals_index, local_learn_strategy, device):
+    def __init__(self, client_id, local_data, local_modals, local_modals_index, local_learn_strategy, device, global_dataloader=None):
         """Client object is initiated by the center server."""
         self.id = client_id
         self.data = local_data
@@ -42,6 +42,7 @@ class Client(object):
         self.learn_strategy = local_learn_strategy
         self.fixmatch = FixMatchLoss()
         self.multimatch = MultiMatchLoss()
+        self.global_dataloader =global_dataloader
     
     @property
     def models(self):
@@ -65,14 +66,16 @@ class Client(object):
 
     def setup(self, **client_config):
         """Set up common configuration of each client; called by center server."""
-        self.dataloader = DataLoader(self.data, batch_size=client_config["batch_size"], shuffle=True, num_workers=8)
+        self.mu = client_config["mu"]
+        self.batch_size = client_config["batch_size"]
+        self.dataloader = DataLoader(self.data, batch_size=self.batch_size*self.mu, shuffle=True, num_workers=8)
         # self.local_epoch = client_config["num_local_epochs"] * int(MAX_INS / len(self.data))
         self.local_epoch = client_config["num_local_epochs"]
         self.criterion = client_config["criterion"]
         self.optimizer = client_config["optimizer"]
         self.optim_config = client_config["optim_config"]
 
-    def client_update(self, display=False):
+    def client_update(self):
         """Update local model using local dataset."""
         optimizers = {}
         for _modal in self.models.keys():
@@ -86,8 +89,6 @@ class Client(object):
             for idx, (inputs, labels) in enumerate(self.dataloader):
             # for inputs, labels in self.dataloader:
                 # check len(inputs) = 2*num_modals
-                modala_w, modala_s, modalb_w, modalb_s = inputs
-                # print (torch.min(modala_w), torch.max(modala_w))
                 data = {}
                 if self.learn_strategy == 'X':
                     for _modal, _modal_index in zip(self.modals, self.modals_index):
@@ -121,6 +122,57 @@ class Client(object):
                                                         outputs[self.modals[1] + 'w'], outputs[self.modals[1] + 's'])
                     # display
                     # if display: print("Id: {} Epoch: {} / {} Iter: {} / {} Loss: {:.2f}".format(self.id, e, self.local_epoch, idx, len(self.dataloader), loss.data.cpu().numpy()), end='\r')
+                # print (loss)
+                loss.backward()
+
+                for _modal in self.modals:
+                    # gradient clipping
+                    nn.utils.clip_grad_norm_(self.models[_modal].parameters(), max_norm=20, norm_type=2)
+                    optimizers[_modal].step()
+
+                if self.device == "cuda": torch.cuda.empty_cache()
+
+        for _model in self.models.values():
+            _model.to("cpu")
+
+    def client_joint_update(self):
+        """Update local model using local dataset."""
+        optimizers = {}
+        for _modal in self.models.keys():
+            self.models[_modal].train()
+            self.models[_modal].to(self.device)
+            optimizers[_modal] = (eval(self.optimizer)(self.models[_modal].parameters(), **self.optim_config))
+            # self.parallel_models.append(nn.DataParallel(_model))
+        # self.models = [nn.DataParallel(_model) for _model in self.models]
+        # training
+        for e in range(self.local_epoch):
+            for _inputs_x, _inputs_u in zip(self.global_dataloader, self.dataloader):
+                inputs_x, labels = _inputs_x
+                inputs_u, _ = _inputs_u
+            # for inputs, labels in self.dataloader:
+                # check len(inputs) = 2*num_modals
+                # print (torch.min(modala_w), torch.max(modala_w))
+                data = {}
+                for _modal, _modal_index in zip(self.modals, self.modals_index):
+                    data[_modal] = interleave(torch.cat((inputs_x[_modal_index * 2], inputs_u[_modal_index * 2], inputs_u[_modal_index * 2 + 1])), 2*self.mu+1).to(self.device)
+                labels = labels.long().to(self.device)
+                # iterate over every model with same data
+                outputs = {}
+                loss = 0
+                for _modal in self.modals:
+                    optimizers[_modal].zero_grad()
+                    # forward
+                    outputs[_modal] = self.models[_modal](data[_modal])
+                    torch.cuda.synchronize()
+                    outputs[_modal] = de_interleave(outputs[_modal], 2*self.mu+1)
+                    outputs[_modal + 'x'] = outputs[_modal][:self.batch_size]
+                    outputs[_modal + 'w'], outputs[_modal + 's'] = outputs[_modal][self.batch_size:].chunk(2)
+                    # print (outputs[_modal + 'w'].shape) # torch.Size([16, 60]
+                    loss = loss + eval(self.criterion)()(outputs[_modal + 'x'], labels)
+                    loss = loss + self.fixmatch(outputs[_modal + 'w'], outputs[_modal + 's'])
+                if self.learn_strategy == "U":
+                    loss = loss + self.multimatch(outputs[self.modals[0] + 'w'], outputs[self.modals[0] + 's'], 
+                                                    outputs[self.modals[1] + 'w'], outputs[self.modals[1] + 's'])
                 # print (loss)
                 loss.backward()
 

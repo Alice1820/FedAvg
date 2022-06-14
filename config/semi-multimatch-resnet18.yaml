@@ -16,7 +16,7 @@ data_config:
 ---
 server_config:
   modals: ["RGB", "Depth"]
-  learn_strategy: "X" # X - supervised, U - unsupervised, N - None
+  learn_strategy: "N" # X - supervised, U - unsupervised, N - None
 ---
 clients_config:
   modals: ["RGB", "Depth"]
@@ -28,13 +28,14 @@ clients_config:
   # clients_nodes: [6, 6, 6] # number of nodes for each combination, [A, B], [A], [B]
 ---
 fed_config:
-  C: 0.1 # fraction
+  C: 0.5 # fraction
   SS: 6 # server subjects
   K: 30 # numbers of clients
   R: 1000 # rounds
   E: 1 # epochs
   SE: 1 # global_epochs
-  B: 24 # batchsize
+  B: 4 # batchsize , total (B+1)*mu
+  mu: 5
   criterion: torch.nn.CrossEntropyLoss
   optimizer: torch.optim.SGD
 ---
