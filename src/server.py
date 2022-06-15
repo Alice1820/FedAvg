@@ -226,10 +226,7 @@ class Server(object):
             for client in self.clients: #
                 # print (client.modals)
                 for _modal in client.modals:
-                    # print (type(_modal), type(client.models), type(self.models))
                     client.models[_modal] = copy.deepcopy(self.models[_modal])
-                    # client.models[_modal] = self.models[_modal]
-                    # client.models = [nn.DataParallel(_model) for _model in client.models]
                     client.models[_modal] = nn.DataParallel(client.models[_modal])
 
             # # move all models to cpu
@@ -245,9 +242,8 @@ class Server(object):
             for idx in sampled_client_indices:
                 for _modal in self.clients[idx].modals:
                     self.clients[idx].models[_modal] = copy.deepcopy(self.models[_modal])
-                    # client.models = [nn.DataParallel(_model) for _model in client.models]
                     self.clients[idx].models[_modal] = nn.DataParallel(self.models[_modal])
-            # # move all models to cpu
+            # move all models to cpu
             # for _model in self.models:
             #     _model.to("cpu")
             message = f"[Round: {str(self._round).zfill(4)}] ...successfully transmitted models to {str(len(sampled_client_indices))} selected clients!"

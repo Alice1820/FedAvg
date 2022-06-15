@@ -179,7 +179,8 @@ class Client(object):
             # self.parallel_models.append(nn.DataParallel(_model))
         # self.models = [nn.DataParallel(_model) for _model in self.models]
         # training
-        iterator = iter(self.dataloader)
+        # iterator = iter(self.dataloader)
+        iterator = iter(self.global_dataloader)
         loss_meter = {}
         loss_x_meter = {}
         loss_u_meter = {}
@@ -191,20 +192,19 @@ class Client(object):
             mask_meter[_modal] = AverageMeter()
         for _ in range(self.local_epoch):
             # initialize
-            # p_bar = tqdm(range(len(self.dataloader)))
-            p_bar = tqdm(range(len(self.global_dataloader)))
+            # p_bar = tqdm(range(len(self.global_dataloader)))
+            p_bar = tqdm(range(len(self.dataloader)))
 
-            # for _inputs_u in self.dataloader:
-            for inputs_x, labels in self.global_dataloader:
-                # inputs_u, _ = _inputs_u
+            for inputs_u, _ in self.dataloader:
+            # for inputs_x, labels in self.global_dataloader:
                 try:
-                    # inputs_x, labels = global_iter.next()
-                    inputs_u, _ = iterator.next()
+                    inputs_x, labels = iterator.next()
+                    # inputs_u, _ = iterator.next()
                 except:
-                    # global_iter = iter(self.global_dataloader)
-                    # inputs_x, labels = global_iter.next()
-                    iterator = iter(self.dataloader)
-                    inputs_u, _ = iterator.next()
+                    iterator = iter(self.global_dataloader)
+                    inputs_x, labels = iterator.next()
+                    # iterator = iter(self.dataloader)
+                    # inputs_u, _ = iterator.next()
             # for inputs, labels in self.dataloader:
                 # check len(inputs) = 2*num_modals
                 # print (torch.min(modala_w), torch.max(modala_w))
@@ -276,7 +276,14 @@ class Client(object):
             _model.eval()
             _model.to(self.device)
 
-        test_losses, corrects = [0 for _ in self.models], [0 for _ in self.models]
+        # test_losses, corrects = [0 for _ in self.models], [0 for _ in self.models]
+        test_losses = {}
+        test_accs = {}
+        test_losses_meter = {}
+        test_accs_meter = {}
+        for _modal in self.modals:
+            test_losses_meter[_modal] = AverageMeter()
+            test_accs_meter[_modal] = AverageMeter()
         with torch.no_grad():
             for inputs, labels in self.dataloader:
                 data = {}
@@ -288,31 +295,36 @@ class Client(object):
                 labels = labels.long().to(self.device)
 
                 # foreward pass through all models
-                for idx, _modal in enumerate(self.modals):
+                for _modal in self.modals:
                     outputs = self.models[_modal](data[_modal])
-                    test_losses[idx] += eval(self.criterion)()(outputs, labels).item()
+                    test_losses_meter[_modal].update(eval(self.criterion)()(outputs, labels).item())
                 
                     predicted = outputs.argmax(dim=1, keepdim=True)
-                    corrects[idx] += predicted.eq(labels.view_as(predicted)).sum().item()
+                    # corrects[idx] += predicted.eq(labels.view_as(predicted)).sum().item()
+                    test_accs_meter[_modal].update(predicted.eq(labels.view_as(predicted)).sum().item())
 
                 if self.device == "cuda": torch.cuda.empty_cache()
         # move all models to cpu
         for _model in self.models.values():
             _model.to("cpu")
 
-        test_losses = [test_loss / len(self.dataloader) for test_loss in test_losses]
-        test_accuracys = [correct / len(self.data) for correct in corrects]
+        # test_losses = [test_loss / len(self.dataloader) for test_loss in test_losses]
+        # test_accuracys = [correct / len(self.data) for correct in corrects]
 
         # message = f"\t[Client {str(self.id).zfill(4)}] ...finished evaluation!"
         # print(message, flush=True); logging.info(message)
         # del message; gc.collect()
 
-        for test_loss, test_accuracy in zip(test_losses, test_accuracys):
+        # for test_loss, test_accuracy in zip(test_losses, test_accuracys):
+        for _modal in self.modals:
+            test_losses[_modal] = test_losses_meter[_modal].avg
+            test_accs[_modal] = test_accs_meter[_modal].avg
             message = f"\t[Client {str(self.id).zfill(4)}] ...finished evaluation!\
-            \n\t=> Test loss: {test_loss:.4f}\
-            \n\t=> Test accuracy: {100. * test_accuracy:.2f}%\n"
+            \n\t=> Modal: {_modal}\
+            \n\t=> Test loss: {test_losses[_modal]:.4f}\
+            \n\t=> Test accuracy: {100. * test_accs[_modal]:.2f}%\n"
             print(message, flush=True); logging.info(message)
             del message; gc.collect()
 
         # print (test_losses, test_accuracys)
-        return test_losses, test_accuracys
+        return test_losses, test_accs
