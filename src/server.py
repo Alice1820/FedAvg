@@ -379,9 +379,9 @@ class Server(object):
         """Do federated training."""
         # select pre-defined fraction of clients randomly
         sampled_client_indices = self.sample_clients()
-        displays = [False for _ in sampled_client_indices]
-        displays[0] = True
-        map_configs = list(itertools.product(sampled_client_indices, displays))
+        # displays = [False for _ in sampled_client_indices]
+        # displays[0] = True
+        # map_configs = list(itertools.product(sampled_client_indices, displays))
         # send global model to the selected clients
         self.transmit_model(sampled_client_indices)
 
@@ -450,7 +450,7 @@ class Server(object):
                     loss = eval(self.criterion)()(outputs, labels)
                     loss.backward()
                     # gradient clipping
-                    # nn.utils.clip_grad_norm_(self.models[_modal].parameters(), max_norm=20, norm_type=2)
+                    nn.utils.clip_grad_norm_(self.models[_modal].parameters(), max_norm=20, norm_type=2)
                     optimizers[_modal].step() 
 
                 if self.device == "cuda": torch.cuda.empty_cache()
