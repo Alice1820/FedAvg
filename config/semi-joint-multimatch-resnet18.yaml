@@ -67,6 +67,6 @@ model_config:
 ---
 log_config:
   log_path: "./log/"
-  log_name:  "semi-multimatch-resnet18.log"
+  log_name:  "semi-multimatch-resnet18-2.log"
   tb_port: 5256
   tb_host: "0.0.0.0"

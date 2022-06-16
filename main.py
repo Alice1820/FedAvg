@@ -1,3 +1,6 @@
+from src.server import Server
+from src.utils import launch_tensor_board
+
 import os
 import sys
 import time
@@ -7,11 +10,8 @@ import yaml
 import threading
 import logging
 
-import torch.nn as nn
+# import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
-
-from src.server import Server
-from src.utils import launch_tensor_board
 
 
 if __name__ == "__main__":

@@ -1,3 +1,5 @@
+from .datasets.NTU_RGBD import get_ntu_rgbd_train, get_ntu_rgbd_test
+
 import os
 import logging
 from pydoc import cli
@@ -15,8 +17,6 @@ import torchvision
 from torchvision import transforms
 
 from sklearn.utils import shuffle
-
-from .datasets.NTU_RGBD import get_ntu_rgbd_train, get_ntu_rgbd_test
 
 logger = logging.getLogger(__name__)
 

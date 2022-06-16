@@ -1,10 +1,12 @@
+from .utils import *
+
 import copy
 import gc
-import itertools
+# import itertools
 import logging
-from operator import mod
-from typing_extensions import assert_type
-from grpc import local_channel_credentials
+# from operator import mod
+# from typing_extensions import assert_type
+# from grpc import local_channel_credentials
 
 import numpy as np
 import torch
@@ -18,7 +20,7 @@ from collections import OrderedDict
 # backbones
 from .models.models import *
 from .models.tsm import TSN
-from .utils import *
+from .models.ema import ModelEMA
 from .client import Client
 
 # import sys
@@ -134,7 +136,7 @@ class Server(object):
             print (message); gc.collect()
 
         if self.use_ema:
-            from models.ema import ModelEMA
+            # from models.ema import ModelEMA
             for _modal in self.modals: self.ema_models[_modal] = ModelEMA(self.models[_modal], ema_decay=self.ema_decay)
 
         # print (self.models["RGB"])
@@ -227,6 +229,8 @@ class Server(object):
                 # print (client.modals)
                 for _modal in client.modals:
                     client.models[_modal] = copy.deepcopy(self.models[_modal])
+                    # state_dict = self.models[_modal].state_dict()
+                    # client.models[_modal].load_state_dict(state_dict)
                     client.models[_modal] = nn.DataParallel(client.models[_modal])
 
             # # move all models to cpu
@@ -241,8 +245,10 @@ class Server(object):
 
             for idx in sampled_client_indices:
                 for _modal in self.clients[idx].modals:
-                    self.clients[idx].models[_modal] = copy.deepcopy(self.models[_modal])
-                    self.clients[idx].models[_modal] = nn.DataParallel(self.models[_modal])
+                    # self.clients[idx].models[_modal] = copy.deepcopy(self.models[_modal])
+                    state_dict = self.models[_modal].state_dict()
+                    self.clients[idx].models[_modal].module.load_state_dict(state_dict)
+                    # self.clients[idx].models[_modal] = nn.DataParallel(self.models[_modal])
             # move all models to cpu
             # for _model in self.models:
             #     _model.to("cpu")
