@@ -2,13 +2,15 @@ global_config:
   seed: 5959
   device: "cuda"
   is_mp: False 
-  num_workers: 4
+  num_workers: 16
   # is_para 
-  use_ema: False # use exponential moving average
+  use_ema: True # use exponential moving average
+  # use_ema: False # use exponential moving average
   ema_decay: 0.999
 ---
 data_config:
-  data_path: "/data0/xfzhang/data/NTU_RGBD_60/" # root_dir
+  data_path: "/data/zhangxifan/NTU_RGBD_60/" # root_dir
+  # data_path: "/data0/xfzhang/data/NTU_RGBD_60/" # root_dir
   dataset_name: "NTU_RGBD"
   modals: ["RGB", "Depth"]
   num_shards: 200
@@ -22,26 +24,28 @@ clients_config:
   modals: ["RGB", "Depth"]
   clients_modals: # list of list, check length of clients_modals == clients_learn_strategy == clients_node
     - ["RGB", "Depth"]
-    - ["RGB"]
-    - ["Depth"]
-  clients_learn_strategy: ["M", "F", "F"] 
+    # - ["RGB"]
+    # - ["Depth"]
+  clients_learn_strategy: ["F"] 
+  # clients_learn_strategy: ["F", "F", "F"] 
   # clients_nodes: [6, 6, 6] # number of nodes for each combination, [A, B], [A], [B]
 ---
 fed_config:
-  C: 0.5 # fraction
-  SS: 6 # server subjects
-  K: 30 # numbers of clients
+  C: 1.0 # fraction
+  SS: 8 # server subjects
+  K: 1 # numbers of clients
   R: 1000 # rounds
-  E: 1 # epochs
+  E: 1024 # local_epochs, local_steps
   SE: 1 # global_epochs
-  B: 6 # batchsize , total (mu+1)*B
-  mu: 3
+  B: 8 # batchsize , total (mu+1)*B
+  mu: 5
   criterion: torch.nn.CrossEntropyLoss
   optimizer: torch.optim.SGD
 ---
 optim_config:
   lr: 0.001
   momentum: 0.9
+  weight_decay: 0.0005
 ---
 init_config:
   init_type: "xavier"
@@ -67,6 +71,6 @@ model_config:
 ---
 log_config:
   log_path: "./log/"
-  log_name:  "semi-multimatch-resnet18-2.log"
+  log_name:  "test-joint-fixmatch-2.log"
   tb_port: 5256
   tb_host: "0.0.0.0"

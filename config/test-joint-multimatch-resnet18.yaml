@@ -9,6 +9,7 @@ global_config:
 ---
 data_config:
   data_path: "/data/zhangxifan/NTU_RGBD_60/" # root_dir
+  # data_path: "/data0/xfzhang/data/NTU_RGBD_60/" # root_dir
   dataset_name: "NTU_RGBD"
   modals: ["RGB", "Depth"]
   num_shards: 200
@@ -16,32 +17,34 @@ data_config:
 ---
 server_config:
   modals: ["RGB", "Depth"]
-  learn_strategy: "X" # X - supervised, U - unsupervised, N - None
+  learn_strategy: "N" # X - supervised, U - unsupervised, N - None
 ---
 clients_config:
   modals: ["RGB", "Depth"]
   clients_modals: # list of list, check length of clients_modals == clients_learn_strategy == clients_node
     - ["RGB", "Depth"]
-    - ["RGB"]
-    - ["Depth"]
-  clients_learn_strategy: ["M", "F", "F"] 
+    # - ["RGB"]
+    # - ["Depth"]
+  clients_learn_strategy: ["M"] 
+  # clients_learn_strategy: ["M", "F", "F"] 
   # clients_nodes: [6, 6, 6] # number of nodes for each combination, [A, B], [A], [B]
 ---
 fed_config:
-  C: 0.5 # fraction
-  SS: 6 # server subjects
-  K: 6 # numbers of clients, total 36 subjects
+  C: 1.0 # fraction
+  SS: 8 # server subjects
+  K: 1 # numbers of clients
   R: 1000 # rounds
   E: 1 # epochs
   SE: 1 # global_epochs
-  B: 4 # batchsize , total (mu+1)*B
-  mu: 5
+  B: 12 # batchsize , total (mu+1)*B
+  mu: 3
   criterion: torch.nn.CrossEntropyLoss
   optimizer: torch.optim.SGD
 ---
 optim_config:
   lr: 0.001
   momentum: 0.9
+  weight_decay: 0.0005
 ---
 init_config:
   init_type: "xavier"
@@ -67,6 +70,6 @@ model_config:
 ---
 log_config:
   log_path: "./log/"
-  log_name:  "semi-continual-multimatch-resnet18-2.log"
+  log_name:  "test-joint-multimatch-resnet18.log"
   tb_port: 5256
   tb_host: "0.0.0.0"

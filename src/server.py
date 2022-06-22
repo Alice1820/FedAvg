@@ -7,13 +7,14 @@ import logging
 # from operator import mod
 # from typing_extensions import assert_type
 # from grpc import local_channel_credentials
+import time
 
 import numpy as np
 import torch
 import torch.nn as nn
 
 from multiprocessing import pool, cpu_count
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from tqdm.auto import tqdm
 from collections import OrderedDict
 
@@ -60,7 +61,7 @@ class Server(object):
     """
     def __init__(self, writer, model_config={}, global_config={}, data_config={}, 
                 server_config={}, clients_config={},
-                init_config={}, fed_config={}, optim_config={}):
+                init_config={}, fed_config={}, optim_config={}, log_config={}):
         self.clients = None
         self._round = 0
         self.writer = writer
@@ -83,6 +84,7 @@ class Server(object):
         if self.use_ema: 
             self.ema_models = {}
             self.ema_decay = global_config["ema_decay"]
+        self.num_workers = global_config["num_workers"]
 
         self.data_path = data_config["data_path"]
         self.dataset_name = data_config["dataset_name"]
@@ -110,6 +112,7 @@ class Server(object):
         self.criterion = fed_config["criterion"]
         self.optimizer = fed_config["optimizer"]
         self.optim_config = optim_config
+        self.log_config = log_config
         
     def setup(self, **init_kwargs):
         """Set up all configuration for federated learning."""
@@ -137,7 +140,7 @@ class Server(object):
 
         if self.use_ema:
             # from models.ema import ModelEMA
-            for _modal in self.modals: self.ema_models[_modal] = ModelEMA(self.models[_modal], ema_decay=self.ema_decay)
+            for _modal in self.modals: self.ema_models[_modal] = ModelEMA(self.models[_modal], decay=self.ema_decay)
 
         # print (self.models["RGB"])
         message = f"[Round: {str(self._round).zfill(4)}] ...successfully initialized {self.model_config['num_modals']} models \
@@ -165,13 +168,34 @@ class Server(object):
         #     del message; gc.collect()
 
         # prepare hold-out dataset for evaluation
+        # train_sampler = RandomSampler
+        # # test_sampler = SequentialSampler
         self.train_data = global_dataset
         self.test_data = test_dataset
         if self.learn_strategy == "X":
-            self.global_dataloader = DataLoader(global_dataset, batch_size=self.batch_size*self.mu, shuffle=True, num_workers=8)
+            self.global_dataloader = DataLoader(global_dataset, 
+                                            batch_size=self.batch_size*(2*self.mu+1), 
+                                            # shuffle=True, 
+                                            sampler=RandomSampler(global_dataset), 
+                                            pin_memory=True,
+                                            num_workers=self.num_workers,
+                                            drop_last=True)
         else:
-            self.global_dataloader = DataLoader(global_dataset, batch_size=self.batch_size, shuffle=True, num_workers=8)
-        self.test_dataloader = DataLoader(test_dataset, batch_size=self.batch_size*self.mu, shuffle=False, num_workers=8)
+            self.global_dataloader = DataLoader(global_dataset, 
+                                                # sampler=train_sampler(global_dataset), 
+                                                batch_size=self.batch_size, 
+                                                sampler=RandomSampler(global_dataset), 
+                                                # shuffle=True, 
+                                                pin_memory=True,
+                                                num_workers=self.num_workers,
+                                                drop_last=True)
+        self.test_dataloader = DataLoader(test_dataset, 
+                                        # sampler=test_sampler(test_dataset), 
+                                        batch_size=self.batch_size*2*(2*self.mu+1), 
+                                        sampler=SequentialSampler(test_dataset),
+                                        # shuffle=False, 
+                                        pin_memory=True,
+                                        num_workers=self.num_workers)
         
         self.modals_index = range(len(self.modals))
 
@@ -180,26 +204,28 @@ class Server(object):
 
         # assign dataset to each client
         self.clients = self.create_clients(local_datasets=local_datasets, local_modals=local_modals, 
-                                        local_modals_index=local_modals_index, local_learn_strategy=local_learn_strategy)
+                                        local_modals_index=local_modals_index, local_learn_strategy=local_learn_strategy,
+                                        writer=self.writer)
 
         # configure detailed settings for client upate and 
         self.setup_clients(
             batch_size=self.batch_size,
             criterion=self.criterion, num_local_epochs=self.local_epochs,
             optimizer=self.optimizer, optim_config=self.optim_config,
-            mu = self.mu
+            mu = self.mu,
+            num_workers = self.num_workers
             )
         
         # send the model skeleton to all clients
         self.transmit_model()
         
-    def create_clients(self, local_datasets, local_modals, local_modals_index, local_learn_strategy):
+    def create_clients(self, local_datasets, local_modals, local_modals_index, local_learn_strategy, writer):
         """Initialize each Client instance."""
         clients = []
         for k, dataset in enumerate(local_datasets):
             # ***create clients
             client = Client(client_id=k, local_data=dataset, local_modals=local_modals[k], local_modals_index=local_modals_index[k], 
-                            local_learn_strategy=local_learn_strategy[k], device=self.device, global_dataloader=self.global_dataloader)
+                            local_learn_strategy=local_learn_strategy[k], device=self.device, global_dataloader=self.global_dataloader, writer=writer)
             clients.append(client)
             message = f"[Round: {str(self._round).zfill(4)}] Created client: DATA: {str(len(dataset)).rjust(6, ' ')}, MODALS: {str(local_modals[k]).rjust(20, ' ')},  LEARN: {local_learn_strategy[k].rjust(4, ' ')}!"
             print(message); logging.info(message)
@@ -245,10 +271,10 @@ class Server(object):
 
             for idx in sampled_client_indices:
                 for _modal in self.clients[idx].modals:
-                    # self.clients[idx].models[_modal] = copy.deepcopy(self.models[_modal])
-                    state_dict = self.models[_modal].state_dict()
-                    self.clients[idx].models[_modal].module.load_state_dict(state_dict)
-                    # self.clients[idx].models[_modal] = nn.DataParallel(self.models[_modal])
+                    # state_dict = self.models[_modal].state_dict()
+                    # self.clients[idx].models[_modal].module.load_state_dict(state_dict)
+                    self.clients[idx].models[_modal] = copy.deepcopy(self.models[_modal])
+                    self.clients[idx].models[_modal] = nn.DataParallel(self.models[_modal])
             # move all models to cpu
             # for _model in self.models:
             #     _model.to("cpu")
@@ -287,9 +313,9 @@ class Server(object):
         for idx in sampled_client_indices:
             # print (self.learn_strategy, self.clients[idx].learn_strategy)
             if self.learn_strategy == 'N' and self.clients[idx].learn_strategy in ['F', 'M']:
-                self.clients[idx].client_joint_update()
+                self.clients[idx].client_joint_update(self._round)
             else:
-                self.clients[idx].client_update()
+                self.clients[idx].client_update(self._round)
             # update selected total size for every modal
             for _modal in self.modals:
                 if _modal in self.clients[idx].modals:
@@ -349,8 +375,8 @@ class Server(object):
             # print (_modal)
             if count > 0: 
                 # ema
-                if self.use_ema: self.ema_models[_modal].update(self.models[_modal])
                 self.models[_modal].load_state_dict(averaged_weights)
+                if self.use_ema: self.ema_models[_modal].update(self.models[_modal])
                 message = f"[Round: {str(self._round).zfill(4)}] MODAL: {str(_modal).rjust(6, ' ')} ...updated weights of {count} clients are successfully averaged!"
                 print(message); logging.info(message)
                 del message; gc.collect()
@@ -425,6 +451,7 @@ class Server(object):
         """Update the global model using the global holdout training dataset (self.train_dataloader)."""
         optimizers = {}
         for _modal in self.models.keys():
+            self.models[_modal] = nn.DataParallel(self.models[_modal])
             self.models[_modal].train()
             self.models[_modal].to(self.device)
             optimizers[_modal] = (eval(self.optimizer)(self.models[_modal].parameters(), **self.optim_config))
@@ -432,7 +459,8 @@ class Server(object):
         # self.models = [nn.DataParallel(_model) for _model in self.models]
         # training
         for e in range(self.global_epoch):
-            for inputs, labels in tqdm(self.global_dataloader):
+            p_bar = tqdm(range(len(self.global_dataloader)))
+            for inputs, labels in self.global_dataloader:
             # for inputs, labels in self.dataloader:
                 # check len(inputs) = 2*num_modals
                 data = {}
@@ -456,9 +484,15 @@ class Server(object):
                     optimizers[_modal].step() 
 
                 if self.device == "cuda": torch.cuda.empty_cache()
+                p_bar.update()
+            p_bar.close()
 
-        for _model in self.models.values():
-            _model.to("cpu")
+        for _modal in self.models:
+            self.models[_modal] = self.models[_modal].module
+            self.models[_modal].to("cpu")
+        # for _model in self.models.values():
+        #     _model.to("cpu")
+        #     _model = _model.module
         
         # ema training
         if self.use_ema:
@@ -479,12 +513,14 @@ class Server(object):
 
         test_losses, test_accuracys = {}, {}
         for _modal in self.modals:
-            self.models[_modal].eval()
-            self.models[_modal].to(self.device)
+            self.eval_models[_modal] = nn.DataParallel(self.eval_models[_modal])
+            self.eval_models[_modal].eval()
+            self.eval_models[_modal].to(self.device)
             test_losses[_modal] = test_accuracys[_modal] =  0
 
+        p_bar = tqdm(range(len(self.test_dataloader)))
         with torch.no_grad():
-            for inputs, labels in tqdm(self.test_dataloader):
+            for inputs, labels in self.test_dataloader:
                 data = {}
                 if self.learn_strategy in ["N", "X"]:
                     for _modal, _modal_index in zip(self.modals, self.modals_index):
@@ -501,9 +537,16 @@ class Server(object):
                     test_accuracys[_modal] += predicted.eq(labels.view_as(predicted)).sum().item()
                 
                 if self.device == "cuda": torch.cuda.empty_cache()
-        # move all models to cpu
-        for _model in self.eval_models.values():
-            _model.to("cpu")
+                p_bar.update()
+            p_bar.close()
+            
+        for _modal in self.modals:
+            self.eval_models[_modal] = self.eval_models[_modal].module
+            self.eval_models[_modal].to("cpu")
+        # # move all models to cpu
+        # for _model in self.eval_models.values():
+        #     _model.to("cpu")
+        #     _model = _model.module
 
         for _modal in self.modals:
             test_losses[_modal] =  test_losses[_modal]  / len(self.test_dataloader)
@@ -522,11 +565,16 @@ class Server(object):
     def fit(self):
         """Execute the whole process of the federated learning."""
         self.results = {"loss": [], "accuracy": []}
+        # save checkpoints
+        self.best_accuracy = {}
+        for _modal in self.modals:
+            self.best_accuracy[_modal] = 0 
         for r in range(self.num_rounds):
             self._round = r + 1
             
             if self.learn_strategy == 'X':
                 self.train_global_model()
+                time.sleep(3.0)
                 test_loss, test_accuracy = self.evaluate_global_model()
             if not self.is_central:
                 sampled_client_indices, mixing_coefficients = self.train_federated_model()
@@ -540,12 +588,19 @@ class Server(object):
             for _modal in self.modals:
                 self.writer.add_scalars(
                     'Loss/{}'.format(_modal),
-                    {f"{self.learn_strategy}_[{self.clients_learn_strategy}]_{self.models[_modal].name} C_{self.fraction}, E_{self.local_epochs}, B_{self.batch_size}": test_loss[_modal]},
+                    {f"{self.learn_strategy}_{self.clients_modals}_{self.clients_learn_strategy}_{self.models[_modal].name} EMA: {self.use_ema}, C_{self.fraction}, K_{self.num_clients}, E_{self.local_epochs}, B_{self.batch_size}": test_loss[_modal]},
                     self._round
                     )
                 self.writer.add_scalars(
                     'Accuracy/{}'.format(_modal), 
-                    {f"{self.learn_strategy}_[{self.clients_learn_strategy}]_{self.models[_modal].name} C_{self.fraction}, E_{self.local_epochs}, B_{self.batch_size}": test_accuracy[_modal]},
+                    {f"{self.learn_strategy}_{self.clients_modals}_{self.clients_learn_strategy}_{self.models[_modal].name} EMA: {self.use_ema}, C_{self.fraction}, E_{self.local_epochs}, E_{self.local_epochs}, B_{self.batch_size}": test_accuracy[_modal]},
                     self._round
                     )
+                # save best checkpoints
+                if test_accuracy[_modal] > self.best_accuracy[_modal]:
+                    self.best_accuracy[_modal] = test_accuracy[_modal]
+                    filename = os.path.join(self.log_config["log_path"], "best_{}.pth")
+                    torch.save(self.models[_modal].state_dict(), filename)
+                filename = os.path.join(self.log_config["log_path"], "new_{}.pth")
+                torch.save(self.models[_modal].state_dict(), filename)
         self.transmit_model()

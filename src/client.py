@@ -8,10 +8,10 @@ from tqdm.auto import tqdm
 import torch
 import torch.nn as nn
 
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, RandomSampler
 
-# from .utils import *
-from .criterion import *
+from .utils import AverageMeter, interleave, de_interleave
+from .criterion import FixMatchLoss, MultiMatchLoss
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ class Client(object):
         device: Training machine indicator (e.g. "cpu", "cuda").
         __model: torch.nn instance as a local model.
     """
-    def __init__(self, client_id, local_data, local_modals, local_modals_index, local_learn_strategy, device, global_dataloader=None):
+    def __init__(self, client_id, local_data, local_modals, local_modals_index, local_learn_strategy, device, global_dataloader, writer):
         """Client object is initiated by the center server."""
         self.id = client_id
         self.data = local_data
@@ -43,6 +43,8 @@ class Client(object):
         self.fixmatch = FixMatchLoss()
         self.multimatch = MultiMatchLoss()
         self.global_dataloader =global_dataloader
+        self.writer = writer
+
     
     @property
     def models(self):
@@ -68,14 +70,23 @@ class Client(object):
         """Set up common configuration of each client; called by center server."""
         self.mu = client_config["mu"]
         self.batch_size = client_config["batch_size"]
-        self.dataloader = DataLoader(self.data, batch_size=self.batch_size*self.mu, shuffle=True, num_workers=8)
+        # train_sampler = RandomSampler
+        self.dataloader = DataLoader(self.data, 
+                                    # sampler=train_sampler(self.data), 
+                                    batch_size=self.batch_size*self.mu, 
+                                    sampler=RandomSampler(self.data), 
+                                    # shuffle=True, 
+                                    pin_memory=True,
+                                    num_workers=client_config["num_workers"],
+                                    drop_last=True)
         # self.local_epoch = client_config["num_local_epochs"] * int(MAX_INS / len(self.data))
-        self.local_epoch = client_config["num_local_epochs"]
+        # self.local_epoch = client_config["num_local_epochs"]
+        self.local_steps = client_config["num_local_epochs"]
         self.criterion = client_config["criterion"]
         self.optimizer = client_config["optimizer"]
         self.optim_config = client_config["optim_config"]
 
-    def client_update(self):
+    def client_update(self, _round=0):
         """Update local model using local dataset."""
         optimizers = {}
         for _modal in self.models.keys():
@@ -164,12 +175,24 @@ class Client(object):
                 p_bar.update()
 
                 if self.device == "cuda": torch.cuda.empty_cache()
-
             p_bar.close()
+        for _modal in self.modals:
+            self.writer.add_scalar(
+                'Client{}/Mask/{}'.format(self.id, _modal),
+                mask_meter[_modal].avg,
+                _round)
+            self.writer.add_scalar(
+                'Client{}/Loss_X/{}'.format(self.id, _modal),
+                loss_x_meter[_modal].avg,
+                _round)
+            self.writer.add_scalar(
+                'Client{}/Loss_U/{}'.format(self.id, _modal),
+                loss_u_meter[_modal].avg,
+                _round)
         for _model in self.models.values():
             _model.to("cpu")
 
-    def client_joint_update(self):
+    def client_joint_update(self, _round=0):
         """Update local model using local dataset."""
         optimizers = {}
         for _modal in self.models.keys():
@@ -180,7 +203,8 @@ class Client(object):
         # self.models = [nn.DataParallel(_model) for _model in self.models]
         # training
         # iterator = iter(self.dataloader)
-        iterator = iter(self.global_dataloader)
+        global_iterator = iter(self.global_dataloader)
+        local_iterator = iter(self.dataloader)
         loss_meter = {}
         loss_x_meter = {}
         loss_u_meter = {}
@@ -190,83 +214,99 @@ class Client(object):
             loss_x_meter[_modal] = AverageMeter()
             loss_u_meter[_modal] = AverageMeter()
             mask_meter[_modal] = AverageMeter()
-        for _ in range(self.local_epoch):
+        p_bar = tqdm(range(self.local_steps))
+        for _ in range(self.local_steps):
             # initialize
             # p_bar = tqdm(range(len(self.global_dataloader)))
-            p_bar = tqdm(range(len(self.dataloader)))
-
-            for inputs_u, _ in self.dataloader:
+            # for inputs_u, _ in self.dataloader:
             # for inputs_x, labels in self.global_dataloader:
-                try:
-                    inputs_x, labels = iterator.next()
-                    # inputs_u, _ = iterator.next()
-                except:
-                    iterator = iter(self.global_dataloader)
-                    inputs_x, labels = iterator.next()
-                    # iterator = iter(self.dataloader)
-                    # inputs_u, _ = iterator.next()
-            # for inputs, labels in self.dataloader:
-                # check len(inputs) = 2*num_modals
-                # print (torch.min(modala_w), torch.max(modala_w))
-                data = {}
-                for _modal, _modal_index in zip(self.modals, self.modals_index):
-                    # print (inputs_x[_modal_index * 2].shape)
-                    # print (inputs_u[_modal_index * 2].shape)
-                    # print (inputs_u[_modal_index * 2 + 1].shape)
-                    data[_modal] = interleave(torch.cat((inputs_x[_modal_index * 2], inputs_u[_modal_index * 2], inputs_u[_modal_index * 2 + 1])), 2*self.mu+1).to(self.device)
-                labels = labels.long().to(self.device)
-                # iterate over every model with same data
-                loss = {}
-                loss_x = {}
-                loss_u = {}
-                mask = {}
-                outputs = {}
-                for _modal in self.modals:
-                    optimizers[_modal].zero_grad()
-                    # loss[_modal] = loss_x[_modal] = loss_u[_modal]= mask[_modal] = 0
-                    # forward
-                    outputs[_modal] = self.models[_modal](data[_modal])
-                    torch.cuda.synchronize()
-                    outputs[_modal] = de_interleave(outputs[_modal], 2*self.mu+1)
-                    outputs[_modal + 'x'] = outputs[_modal][:self.batch_size]
-                    outputs[_modal + 'w'], outputs[_modal + 's'] = outputs[_modal][self.batch_size:].chunk(2)
-                    # print (outputs[_modal + 'w'].shape) # torch.Size([16, 60]
-                    loss_x[_modal] = eval(self.criterion)()(outputs[_modal + 'x'], labels)
+            try:
+                inputs_x, labels = global_iterator.next()
+            except:
+                global_iterator = iter(self.global_dataloader)
+                inputs_x, labels = global_iterator.next()
+            try:
+                inputs_u, _ = local_iterator.next()
+            except:
+                local_iterator = iter(self.dataloader)
+                inputs_u, _ = local_iterator.next()
+        # for inputs, labels in self.dataloader:
+            # check len(inputs) = 2*num_modals
+            # print (torch.min(modala_w), torch.max(modala_w))
+            data = {}
+            for _modal, _modal_index in zip(self.modals, self.modals_index):
+                # print (inputs_x[_modal_index * 2].shape)
+                # print (inputs_u[_modal_index * 2].shape)
+                # print (inputs_u[_modal_index * 2 + 1].shape)
+                data[_modal] = interleave(torch.cat((inputs_x[_modal_index * 2], inputs_u[_modal_index * 2], inputs_u[_modal_index * 2 + 1])), 2*self.mu+1).to(self.device)
+            labels = labels.long().to(self.device)
+            # iterate over every model with same data
+            loss = {}
+            loss_x = {}
+            loss_u = {}
+            mask = {}
+            outputs = {}
+            for _modal in self.modals:
+                optimizers[_modal].zero_grad()
+                # loss[_modal] = loss_x[_modal] = loss_u[_modal]= mask[_modal] = 0
+                # forward
+                outputs[_modal] = self.models[_modal](data[_modal])
+                torch.cuda.synchronize()
+                outputs[_modal] = de_interleave(outputs[_modal], 2*self.mu+1)
+                outputs[_modal + 'x'] = outputs[_modal][:self.batch_size]
+                outputs[_modal + 'w'], outputs[_modal + 's'] = outputs[_modal][self.batch_size:].chunk(2)
+                # print (outputs[_modal + 'w'].shape) # torch.Size([16, 60]
+                loss_x[_modal] = eval(self.criterion)()(outputs[_modal + 'x'], labels)
+                # update average meter
+                loss_x_meter[_modal].update(loss_x[_modal])
+                if self.learn_strategy == "F":
+                    mask[_modal], loss_u[_modal] = self.fixmatch(outputs[_modal + 'w'], outputs[_modal + 's'])
                     # update average meter
-                    loss_x_meter[_modal].update(loss_x[_modal])
-                    if self.learn_strategy == "F":
-                        mask[_modal], loss_u[_modal] = self.fixmatch(outputs[_modal + 'w'], outputs[_modal + 's'])
-                        # update average meter
-                        mask_meter[_modal].update(mask[_modal])
-                        loss_u_meter[_modal].update(loss_u[_modal])
-                if self.learn_strategy == "M":
-                    mask[self.modals[0]], mask[self.modals[1]], loss_u[self.modals[0]], loss_u[self.modals[1]] = \
-                                                    self.multimatch(outputs[self.modals[0] + 'w'], outputs[self.modals[0] + 's'], 
-                                                    outputs[self.modals[1] + 'w'], outputs[self.modals[1] + 's'])
-                    # update average meter
-                    mask_meter[self.modals[0]].update(mask[self.modals[0]])
-                    mask_meter[self.modals[1]].update(mask[self.modals[1]])
-                    loss_u_meter[self.modals[0]].update(loss_u[self.modals[0]])
-                    loss_u_meter[self.modals[1]].update(loss_u[self.modals[1]])
-                    
+                    mask_meter[_modal].update(mask[_modal])
+                    loss_u_meter[_modal].update(loss_u[_modal])
+            if self.learn_strategy == "M":
+                mask[self.modals[0]], mask[self.modals[1]], loss_u[self.modals[0]], loss_u[self.modals[1]] = \
+                                                self.multimatch(outputs[self.modals[0] + 'w'], outputs[self.modals[0] + 's'], 
+                                                outputs[self.modals[1] + 'w'], outputs[self.modals[1] + 's'])
+                # update average meter
+                mask_meter[self.modals[0]].update(mask[self.modals[0]])
+                mask_meter[self.modals[1]].update(mask[self.modals[1]])
+                loss_u_meter[self.modals[0]].update(loss_u[self.modals[0]])
+                loss_u_meter[self.modals[1]].update(loss_u[self.modals[1]])
+                
 
-                # print (loss)
+            # print (loss)
 
-                for _modal in self.modals:
-                    loss[_modal] = loss_x[_modal] + loss_u[_modal]
-                    loss[_modal].backward()
-                    # gradient clipping
-                    nn.utils.clip_grad_norm_(self.models[_modal].parameters(), max_norm=20, norm_type=2)
-                    optimizers[_modal].step()
+            for _modal in self.modals:
+                loss[_modal] = loss_x[_modal] + loss_u[_modal]
+                loss[_modal].backward()
+                # gradient clipping
+                nn.utils.clip_grad_norm_(self.models[_modal].parameters(), max_norm=20, norm_type=2)
+                optimizers[_modal].step()
 
-                # display
-                descrip = "Train Client Id: {:3} ".format(self.id)
-                for _modal in self.modals:
-                    descrip += "LX_{}: {:.2f} LU_{}: {:.2f} M_{}: {:.2f} ".format(_modal, loss_x_meter[_modal].avg, _modal, loss_u_meter[_modal].avg, _modal, mask_meter[_modal].avg)
-                p_bar.set_description(descrip)
-                p_bar.update()
-                if self.device == "cuda": torch.cuda.empty_cache()
-            p_bar.close()
+            # display
+            descrip = "Train Client Id: {:3} ".format(self.id)
+            for _modal in self.modals:
+                descrip += "LX_{}: {:.2f} LU_{}: {:.2f} M_{}: {:.2f} ".format(_modal, loss_x_meter[_modal].avg, _modal, loss_u_meter[_modal].avg, _modal, mask_meter[_modal].avg)
+            p_bar.set_description(descrip)
+            p_bar.update()
+            if self.device == "cuda": torch.cuda.empty_cache()
+        p_bar.close()
+            # self.dataloader.close()
+        for _modal in self.modals:
+            self.writer.add_scalar(
+                'Client{}/Mask/{}'.format(self.id, _modal),
+                mask_meter[_modal].avg,
+                _round)
+            self.writer.add_scalar(
+                'Client{}/Loss_X/{}'.format(self.id, _modal),
+                loss_x_meter[_modal].avg,
+                _round)
+            self.writer.add_scalar(
+                'Client{}/Loss_U/{}'.format(self.id, _modal),
+                loss_u_meter[_modal].avg,
+                _round)
+
         for _model in self.models.values():
             _model.to("cpu")
 

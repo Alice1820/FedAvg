@@ -157,26 +157,31 @@ def create_modals(num_clients, server_modals, clients_modals, clients_learn_stra
 
 def create_ntu_datasets(data_path, num_clients, num_server_subjects=0, seed=0):
     # config A
-    # train_subjects = [1, 4, 8, 13, 15, 16, 17, 18, 19, 25, 27, 28, 31, 34, 35, 38, 2, 5, 9, 14] # 20 subjects
-    # test_subjects = [3, 6, 7, 10, 11, 12, 20, 21, 22, 23, 24, 26, 29, 30, 32, 33, 36, 37, 39, 40] # 20 subjects
+    train_subjects = [1, 4, 8, 13, 15, 16, 17, 18, 19, 25, 27, 28, 31, 34, 35, 38, 2, 5, 9, 14] # 20 subjects
+    test_subjects = [3, 6, 7, 10, 11, 12, 20, 21, 22, 23, 24, 26, 29, 30, 32, 33, 36, 37, 39, 40] # 20 subjects
     # # config B
-    train_subjects = [1, 4, 8, 13, 15, 16, 17, 18, 19, 25, 27, 28, 31, 34, 35, 38, 3, 6, 7, 10, 11, 12, 20, 21, 22, 23, 24, 26, 29, 30, 32, 33, 36, 37, 39, 40 ] # 36 subjects
-    test_subjects = [2, 5, 9, 14] # 4 subjects
+    # train_subjects = [1, 4, 8, 13, 15, 16, 17, 18, 19, 25, 27, 28, 31, 34, 35, 38, 3, 6, 7, 10, 11, 12, 20, 21, 22, 23, 24, 26, 29, 30, 32, 33, 36, 37, 39, 40 ] # 36 subjects
+    # test_subjects = [2, 5, 9, 14] # 4 subjects
 
     test_dataset = get_ntu_rgbd_test(root_dir=data_path, subjects=test_subjects)
 
     # reserve subjects for server training
     random.seed(seed)
     if num_server_subjects > 0:
-        indexes = random.choices(range(len(train_subjects)), k=num_server_subjects)
+        # indexes = random.choices(range(len(train_subjects)), k=num_server_subjects)
+        # indexes = random.sample(range(len(train_subjects)), k=num_server_subjects)
+        # only the first 8 subjects
+        indexes = range(num_server_subjects)
         server_subjects = [train_subjects[i] for i in indexes]
         clients_subjects = [train_subjects[i] for i in range(len(train_subjects)) if i not in indexes]
         server_dataset = get_ntu_rgbd_test(root_dir=data_path, subjects=server_subjects)
     else:
+        server_subjects = []
         clients_subjects = train_subjects
         server_dataset = []
     # naturally non-IID
     # sort data by subjects
+    # print (indexes, clients_subjects, server_subjects)
     assert len(clients_subjects) % num_clients == 0 # train_subjects can be 
     shards = len(clients_subjects) // num_clients
     
@@ -184,7 +189,9 @@ def create_ntu_datasets(data_path, num_clients, num_server_subjects=0, seed=0):
     split_subjects = [clients_subjects[x:x+shards] for x in range(0, len(clients_subjects), shards)]
     # print(split_subjects)
     local_datasets = [
-            get_ntu_rgbd_train(root_dir=data_path, subjects=split_list)
+            # get_ntu_rgbd_train(root_dir=data_path, subjects=split_list)
+            # append server subjects to clients, perform unsupervised learning
+            get_ntu_rgbd_train(root_dir=data_path, subjects=split_list+server_subjects)
             for split_list in split_subjects
         ]
     return local_datasets, server_dataset, test_dataset

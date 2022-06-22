@@ -2,11 +2,14 @@ global_config:
   seed: 5959
   device: "cuda"
   is_mp: False 
-  use_ema: False # use exponential moving average
+  num_workers: 8
+  use_ema: True # use exponential moving average
+  # use_ema: False # use exponential moving average
   ema_decay: 0.999
 ---
 data_config:
   data_path: "/data0/xfzhang/data/NTU_RGBD_60/" # root_dir
+  # data_path: "/data/zhangxifan/NTU_RGBD_60/" # root_dir
   dataset_name: "NTU_RGBD"
   modals: ["RGB", "Depth"]
   num_shards: 200
@@ -26,19 +29,21 @@ clients_config:
   # clients_nodes: [6, 6, 6] # number of nodes for each combination, [A, B], [A], [B]
 ---
 fed_config:
-  C: 0.5 # fraction
-  SS: 6 # central subjects
-  K: 30 # numbers of clients
+  C: 1.0 # fraction
+  SS: 8 # central subjects
+  K: 12 # numbers of clients
   R: 1000 # rounds
   E: 1 # epochs
   SE: 1 # global_epochs
-  B: 32 # batchsize
+  B: 12 # batchsize
+  mu: 5
   criterion: torch.nn.CrossEntropyLoss
   optimizer: torch.optim.SGD
 ---
 optim_config:
   lr: 0.001
   momentum: 0.9
+  weight_decay: 0.0005
 ---
 init_config:
   init_type: "xavier"

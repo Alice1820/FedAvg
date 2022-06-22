@@ -14,6 +14,9 @@ from sklearn.utils import shuffle
 import cv2
 from PIL import Image
 
+cv2.setNumThreads(0)
+cv2.ocl.setUseOpenCL(False)
+
 logger = logging.getLogger(__name__)
 
 cifar10_mean = (0.4914, 0.4822, 0.4465)
@@ -34,8 +37,8 @@ dep_std = [0.5]
 def load_video(path, vid_len=32):
     cap = cv2.VideoCapture(path)
     num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    # width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    # height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     # Init the numpy array
     taken = np.linspace(0, num_frames, vid_len).astype(int)

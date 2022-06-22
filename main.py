@@ -1,3 +1,4 @@
+from cv2 import log
 from src.server import Server
 from src.utils import launch_tensor_board
 
@@ -37,7 +38,7 @@ if __name__ == "__main__":
     global_config["is_para"] = (len(init_config["gpu_ids"]) > 1)
 
     # modify log_path to contain current time
-    log_config["log_path"] = os.path.join(log_config["log_path"], str(datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S")))
+    log_config["log_path"] = os.path.join(log_config["log_path"], str(datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S")) + task_name)
 
     # initiate TensorBaord for tracking losses and metrics
     writer = SummaryWriter(log_dir=log_config["log_path"], filename_suffix="-FL-{}".format(task_name))
@@ -66,7 +67,7 @@ if __name__ == "__main__":
     # initialize federated learning 
     central_server = Server(writer, model_config=model_config, global_config=global_config, data_config=data_config, 
                             server_config=server_config, clients_config=clients_config,
-                            init_config=init_config, fed_config=fed_config, optim_config=optim_config)
+                            init_config=init_config, fed_config=fed_config, optim_config=optim_config, log_config=log_config)
     central_server.setup()
 
     # do federated learning

@@ -186,6 +186,7 @@ class TSN(nn.Module):
 
         if 'resnet' in base_model:
             self.base_model = getattr(torchvision.models, base_model)(True if self.pretrain == 'imagenet' else False)
+            # self.base_model = getattr(torchvision.models, base_model)(False) # no pretrain models
             if self.is_shift:
                 print('Adding temporal shift...')
                 from ops.temporal_shift import make_temporal_shift
@@ -264,23 +265,23 @@ class TSN(nn.Module):
         else:
             raise ValueError('Unknown base model: {}'.format(base_model))
 
-    def train(self, mode=True):
-        """
-        Override the default train() to freeze the BN parameters
-        :return:
-        """
-        super(TSN, self).train(mode)
-        count = 0
-        if self._enable_pbn and mode:
-            # print("Freezing BatchNorm2D except the first one.")
-            for m in self.base_model.modules():
-                if isinstance(m, nn.BatchNorm2d):
-                    count += 1
-                    if count >= (2 if self._enable_pbn else 1):
-                        m.eval()
-                        # shutdown update in frozen mode
-                        m.weight.requires_grad = False
-                        m.bias.requires_grad = False
+    # def train(self, mode=True):
+    #     """
+    #     Override the default train() to freeze the BN parameters
+    #     :return:
+    #     """
+    #     super(TSN, self).train(mode)
+    #     count = 0
+    #     if self._enable_pbn and mode:
+    #         # print("Freezing BatchNorm2D except the first one.")
+    #         for m in self.base_model.modules():
+    #             if isinstance(m, nn.BatchNorm2d):
+    #                 count += 1
+    #                 if count >= (2 if self._enable_pbn else 1):
+    #                     m.eval()
+    #                     # shutdown update in frozen mode
+    #                     m.weight.requires_grad = False
+    #                     m.bias.requires_grad = False
 
     def partialBN(self, enable):
         self._enable_pbn = enable
