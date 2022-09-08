@@ -5,7 +5,8 @@ global_config:
   num_workers: 8
   use_ema: True # use exponential moving average
   # use_ema: False # use exponential moving average
-  ema_decay: 0.001
+  # ema_decay: 0.001
+  ema_decay: 0.9
 ---
 data_config:
   # data_path: "/data0/xfzhang/data/NTU_RGBD_60/" # root_dir

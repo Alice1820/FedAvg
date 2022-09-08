@@ -77,5 +77,4 @@ log_config:
   log_path: "./log/"
   log_name:  "semi-multimatch-resnet18.log"
   tb_port: 5252
-  tb_host: "0.0.0.0"
-  resume: None
+  tb_host: None
