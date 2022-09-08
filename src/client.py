@@ -40,11 +40,10 @@ class Client(object):
         self.modals = local_modals
         self.modals_index = local_modals_index
         self.learn_strategy = local_learn_strategy
-        self.fixmatch = FixMatchLoss()
-        self.multimatch = MultiMatchLoss()
         self.global_dataloader =global_dataloader
         self.writer = writer
-
+        self.fixmatch = FixMatchLoss()
+        self.multimatch = MultiMatchLoss()
     
     @property
     def models(self):
@@ -80,14 +79,15 @@ class Client(object):
                                     num_workers=client_config["num_workers"],
                                     drop_last=True)
         # self.local_epoch = client_config["num_local_epochs"] * int(MAX_INS / len(self.data))
-        # self.local_epoch = client_config["num_local_epochs"]
+        self.local_epoch = client_config["num_local_epochs"]
         self.local_steps = client_config["num_local_epochs"]
         self.criterion = client_config["criterion"]
         self.optimizer = client_config["optimizer"]
         self.optim_config = client_config["optim_config"]
 
-    def client_update(self, _round=0):
+    def client_update(self, _round=0, confidence_ratio={}):
         """Update local model using local dataset."""
+        # RGBD
         optimizers = {}
         for _modal in self.models.keys():
             self.models[_modal].train()
@@ -133,7 +133,7 @@ class Client(object):
                     loss_x[_modal] = loss_u[_modal] = 0
                     # forward
                     optimizers[_modal].zero_grad()
-                    outputs[_modal] = self.models[_modal](data[_modal])
+                    _, outputs[_modal] = self.models[_modal](data[_modal])
                     torch.cuda.synchronize()
                     # de_interleave outputs
                     outputs[_modal] = de_interleave(outputs[_modal], 2)
@@ -144,14 +144,19 @@ class Client(object):
                         # update average meter
                         loss_x_meter[_modal].update(loss_x[_modal])
                     if self.learn_strategy == "F":
-                        mask[_modal], loss_u[_modal] = self.fixmatch(outputs[_modal + 'w'], outputs[_modal + 's'])
+                        fixmatch = FixMatchLoss(threshold=confidence_ratio[_modal])
+                        mask[_modal], loss_u[_modal] = fixmatch(outputs[_modal + 'w'], outputs[_modal + 's'])
                         # update average meter
                         mask_meter[_modal].update(mask[_modal])
                         loss_u_meter[_modal].update(loss_u[_modal])
                 # jointly compute multimatch loss
                 if self.learn_strategy == "M":
+                    if True:
+                        multimatch = MultiMatchLoss(threshold=(confidence_ratio[self.modals[0]], confidence_ratio[self.modals[1]])) # use cr
+                    else:
+                        multimatch = MultiMatchLoss()
                     mask[self.modals[0]], mask[self.modals[1]], loss_u[self.modals[0]], loss_u[self.modals[1]] = \
-                            self.multimatch(outputs[self.modals[0] + 'w'], outputs[self.modals[0] + 's'], 
+                            multimatch(outputs[self.modals[0] + 'w'], outputs[self.modals[0] + 's'], 
                             outputs[self.modals[1] + 'w'], outputs[self.modals[1] + 's'])
                     # update average meter
                     mask_meter[self.modals[0]].update(mask[self.modals[0]])
@@ -176,6 +181,7 @@ class Client(object):
 
                 if self.device == "cuda": torch.cuda.empty_cache()
             p_bar.close()
+        
         for _modal in self.modals:
             self.writer.add_scalar(
                 'Client{}/Mask/{}'.format(self.id, _modal),
@@ -250,7 +256,7 @@ class Client(object):
                 optimizers[_modal].zero_grad()
                 # loss[_modal] = loss_x[_modal] = loss_u[_modal]= mask[_modal] = 0
                 # forward
-                outputs[_modal] = self.models[_modal](data[_modal])
+                _, outputs[_modal] = self.models[_modal](data[_modal])
                 torch.cuda.synchronize()
                 outputs[_modal] = de_interleave(outputs[_modal], 2*self.mu+1)
                 outputs[_modal + 'x'] = outputs[_modal][:self.batch_size]
@@ -336,7 +342,7 @@ class Client(object):
 
                 # foreward pass through all models
                 for _modal in self.modals:
-                    outputs = self.models[_modal](data[_modal])
+                    _, outputs = self.models[_modal](data[_modal])
                     test_losses_meter[_modal].update(eval(self.criterion)()(outputs, labels).item())
                 
                     predicted = outputs.argmax(dim=1, keepdim=True)

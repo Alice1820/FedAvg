@@ -62,7 +62,8 @@ class ConsensusModule(torch.nn.Module):
         return SegmentConsensus(self.consensus_type, self.dim)(input)
 
 class TSN(nn.Module):
-    def __init__(self, num_class=120, num_segments=8, modality='RGB',
+    def __init__(self, num_class=60, num_segments=8, 
+                modal='RGB', name='TSN',
                  base_model='resnet18', new_length=None,
                  consensus_type='avg', before_softmax=True,
                  dropout=0.8, img_feature_dim=256,
@@ -71,7 +72,8 @@ class TSN(nn.Module):
                  fc_lr5=False, 
                  temporal_pool=False, non_local=False):
         super(TSN, self).__init__()
-        self.modality = modality
+        self.modality = modal
+        self.name = name
         self.num_segments = num_segments
         self.reshape = True
         self.before_softmax = before_softmax

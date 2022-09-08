@@ -1,3 +1,4 @@
+# from multimatch.train_base_ntu import train
 from .utils import *
 
 import copy
@@ -61,7 +62,7 @@ class Server(object):
     """
     def __init__(self, writer, model_config={}, global_config={}, data_config={}, 
                 server_config={}, clients_config={},
-                init_config={}, fed_config={}, optim_config={}, log_config={}):
+                init_config={}, fed_config={}, optim_config={}, ssl_config={}, log_config={}):
         self.clients = None
         self._round = 0
         self.writer = writer
@@ -83,7 +84,7 @@ class Server(object):
         self.use_ema = global_config["use_ema"]
         if self.use_ema: 
             self.ema_models = {}
-            self.ema_decay = global_config["ema_decay"]
+        self.ema_decay = global_config["ema_decay"]
         self.num_workers = global_config["num_workers"]
 
         self.data_path = data_config["data_path"]
@@ -111,9 +112,13 @@ class Server(object):
 
         self.criterion = fed_config["criterion"]
         self.optimizer = fed_config["optimizer"]
+        self.threshold = ssl_config["threshold"]
+
         self.optim_config = optim_config
         self.log_config = log_config
-        
+        self.confidence_ratio = {}
+        self.resume = log_config["resume"]
+
     def setup(self, **init_kwargs):
         """Set up all configuration for federated learning."""
         # valid only before the very first round
@@ -140,7 +145,8 @@ class Server(object):
 
         if self.use_ema:
             # from models.ema import ModelEMA
-            for _modal in self.modals: self.ema_models[_modal] = ModelEMA(self.models[_modal], decay=self.ema_decay)
+            for _modal in self.modals: 
+                self.ema_models[_modal] = ModelEMA(self.models[_modal], decay=self.ema_decay)
 
         # print (self.models["RGB"])
         message = f"[Round: {str(self._round).zfill(4)}] ...successfully initialized {self.model_config['num_modals']} models \
@@ -219,6 +225,16 @@ class Server(object):
         # send the model skeleton to all clients
         self.transmit_model()
         
+        # resume from previous ckeckpoint
+        # load checkpoints
+        if self.resume is not None:
+            logger.info("==> Resuming from checkpoint..")
+            assert os.path.isfile(self.resume), "Error: no checkpoint directory found!"
+            # args = checkpoint['args']
+            checkpoint = torch.load(self.resume)
+            # self.start_epoch = checkpoint['epoch']
+            model.load_state_dict(checkpoint['state_dict'])
+
     def create_clients(self, local_datasets, local_modals, local_modals_index, local_learn_strategy, writer):
         """Initialize each Client instance."""
         clients = []
@@ -271,10 +287,10 @@ class Server(object):
 
             for idx in sampled_client_indices:
                 for _modal in self.clients[idx].modals:
-                    # state_dict = self.models[_modal].state_dict()
-                    # self.clients[idx].models[_modal].module.load_state_dict(state_dict)
-                    self.clients[idx].models[_modal] = copy.deepcopy(self.models[_modal])
-                    self.clients[idx].models[_modal] = nn.DataParallel(self.models[_modal])
+                    state_dict = self.models[_modal].state_dict()
+                    self.clients[idx].models[_modal].module.load_state_dict(state_dict)
+                    # self.clients[idx].models[_modal] = copy.deepcopy(self.models[_modal])
+                    # self.clients[idx].models[_modal] = nn.DataParallel(self.models[_modal])
             # move all models to cpu
             # for _model in self.models:
             #     _model.to("cpu")
@@ -315,7 +331,7 @@ class Server(object):
             if self.learn_strategy == 'N' and self.clients[idx].learn_strategy in ['F', 'M']:
                 self.clients[idx].client_joint_update(self._round)
             else:
-                self.clients[idx].client_update(self._round)
+                self.clients[idx].client_update(self._round, self.confidence_ratio) # relative confidence
             # update selected total size for every modal
             for _modal in self.modals:
                 if _modal in self.clients[idx].modals:
@@ -376,7 +392,8 @@ class Server(object):
             if count > 0: 
                 # ema
                 self.models[_modal].load_state_dict(averaged_weights)
-                if self.use_ema: self.ema_models[_modal].update(self.models[_modal])
+                if self.use_ema: 
+                    self.ema_models[_modal].update(self.models[_modal])
                 message = f"[Round: {str(self._round).zfill(4)}] MODAL: {str(_modal).rjust(6, ' ')} ...updated weights of {count} clients are successfully averaged!"
                 print(message); logging.info(message)
                 del message; gc.collect()
@@ -450,14 +467,22 @@ class Server(object):
     def train_global_model(self):
         """Update the global model using the global holdout training dataset (self.train_dataloader)."""
         optimizers = {}
-        for _modal in self.models.keys():
+        train_losses = {}
+        for _modal in self.modals:
             self.models[_modal] = nn.DataParallel(self.models[_modal])
             self.models[_modal].train()
             self.models[_modal].to(self.device)
             optimizers[_modal] = (eval(self.optimizer)(self.models[_modal].parameters(), **self.optim_config))
+            # calculate averaged confidence ratio of one epoch
+            self.confidence_ratio[_modal] = AverageMeter()
+            train_losses[_modal] = AverageMeter()
             # self.parallel_models.append(nn.DataParallel(_model))
         # self.models = [nn.DataParallel(_model) for _model in self.models]
         # training
+        message = f"[Round: {str(self._round).zfill(4)}] ...updating global model using the global heldout training dataset!"
+        print(message); logging.info(message)
+        del message; gc.collect()
+
         for e in range(self.global_epoch):
             p_bar = tqdm(range(len(self.global_dataloader)))
             for inputs, labels in self.global_dataloader:
@@ -473,36 +498,43 @@ class Server(object):
                 # data = [modala_w.float().to(self.device), modalb_w.float().to(self.device)]
                 labels = labels.long().to(self.device)
                 # iterate over every model with same data
+                descrip = ''
                 for _modal in self.modals:
                     optimizers[_modal].zero_grad()
-                    outputs = self.models[_modal](data[_modal])
+                    _, outputs = self.models[_modal](data[_modal])
                     torch.cuda.synchronize()
                     loss = eval(self.criterion)()(outputs, labels)
                     loss.backward()
                     # gradient clipping
                     nn.utils.clip_grad_norm_(self.models[_modal].parameters(), max_norm=20, norm_type=2)
                     optimizers[_modal].step() 
+                    train_losses[_modal].update(loss.item())
+                    descrip += f"[Round: {str(self._round).zfill(4)} Epoch: {str(e).zfill(2)}] LX_{_modal}: {train_losses[_modal].avg:.4f}. "
 
-                if self.device == "cuda": torch.cuda.empty_cache()
+                    real_confidence = F.softmax(outputs.detach(), -1)
+                    real_confidence = real_confidence.max(dim=1)[0]
+                    self.confidence_ratio[_modal].update(real_confidence.mean(0) * self.threshold)
+                p_bar.set_description(descrip)
                 p_bar.update()
+            if self.device == "cuda": torch.cuda.empty_cache()
             p_bar.close()
 
-        for _modal in self.models:
+        for _modal in self.modals:
             self.models[_modal] = self.models[_modal].module
             self.models[_modal].to("cpu")
+            # calculate averaged confidence ratio
+            self.confidence_ratio[_modal] = self.confidence_ratio[_modal].avg
+            self.writer.add_scalar(
+                'Server/train/Lx_{}'.format(_modal),
+                train_losses[_modal].avg,
+                self._round)
+            if self.use_ema:
+                self.ema_models[_modal].update(self.models[_modal])
+
         # for _model in self.models.values():
         #     _model.to("cpu")
         #     _model = _model.module
         
-        # ema training
-        if self.use_ema:
-            for _modal in self.modals:
-                self.ema_models[_modal].update(self.models[_modal])
-        
-        message = f"[Round: {str(self._round).zfill(4)}] ...updated global model using the global holdout training dataset!"
-        print(message); logging.info(message)
-        del message; gc.collect()
-
     def evaluate_global_model(self):
         """Evaluate the global model using the global holdout dataset (self.data)."""
         for _modal in self.modals:
@@ -516,7 +548,8 @@ class Server(object):
             self.eval_models[_modal] = nn.DataParallel(self.eval_models[_modal])
             self.eval_models[_modal].eval()
             self.eval_models[_modal].to(self.device)
-            test_losses[_modal] = test_accuracys[_modal] =  0
+            test_losses[_modal] = AverageMeter()
+            test_accuracys[_modal] =  AverageMeter()
 
         p_bar = tqdm(range(len(self.test_dataloader)))
         with torch.no_grad():
@@ -529,15 +562,18 @@ class Server(object):
                     raise Exception("Not implemented.")
                 labels = labels.long().to(self.device)
                 # foreward pass through all models
+                descrip = ''
                 for _modal in self.modals:
-                    outputs = self.eval_models[_modal](data[_modal])
-                    test_losses[_modal] += eval(self.criterion)()(outputs, labels).item()
+                    _, outputs = self.eval_models[_modal](data[_modal])
+                    test_losses[_modal].update(eval(self.criterion)()(outputs, labels).item())
                 
                     predicted = outputs.argmax(dim=1, keepdim=True)
-                    test_accuracys[_modal] += predicted.eq(labels.view_as(predicted)).sum().item()
-                
-                if self.device == "cuda": torch.cuda.empty_cache()
+                    # test_accuracys[_modal] += predicted.eq(labels.view_as(predicted)).sum().item()
+                    test_accuracys[_modal].update(predicted.eq(labels.view_as(predicted)).float().mean().item())
+                    descrip += "LX_{}: {:.4f}. Acc_{}: {:.4f}. ".format(_modal, test_losses[_modal].avg, _modal, test_accuracys[_modal].avg)
+                p_bar.set_description(descrip)
                 p_bar.update()
+            if self.device == "cuda": torch.cuda.empty_cache()
             p_bar.close()
             
         for _modal in self.modals:
@@ -549,14 +585,16 @@ class Server(object):
         #     _model = _model.module
 
         for _modal in self.modals:
-            test_losses[_modal] =  test_losses[_modal]  / len(self.test_dataloader)
-            test_accuracys[_modal]  = test_accuracys[_modal] / len(self.test_data)
+            # test_losses[_modal] =  test_losses[_modal]  / len(self.test_dataloader)
+            test_losses[_modal] =  test_losses[_modal].avg
+            # test_accuracys[_modal]  = test_accuracys[_modal] / len(self.test_data)
+            test_accuracys[_modal]  = test_accuracys[_modal].avg
 
             message = f"[Round: {str(self._round).zfill(4)}] Evaluate global model's performance...!\
                 \n\t[Server] ...finished evaluation!\
                 \n\t=> Modal: {_modal}\
                 \n\t=> Loss: {test_losses[_modal]:.4f}\
-                \n\t=> Accuracy: {100. * test_accuracys[_modal]:.2f}%\n"            
+                \n\t=> Accuracy: {100 * test_accuracys[_modal]:.2f}%\n"            
             print(message); logging.info(message)
             del message; gc.collect()
 
@@ -565,7 +603,6 @@ class Server(object):
     def fit(self):
         """Execute the whole process of the federated learning."""
         self.results = {"loss": [], "accuracy": []}
-        # save checkpoints
         self.best_accuracy = {}
         for _modal in self.modals:
             self.best_accuracy[_modal] = 0 
@@ -575,12 +612,13 @@ class Server(object):
             if self.learn_strategy == 'X':
                 self.train_global_model()
                 time.sleep(3.0)
-                test_loss, test_accuracy = self.evaluate_global_model()
+                # test_loss, test_accuracy = self.evaluate_global_model()
             if not self.is_central:
                 sampled_client_indices, mixing_coefficients = self.train_federated_model()
                 self.average_model(sampled_client_indices, mixing_coefficients)
-                # TODO: ema model
-                test_loss, test_accuracy = self.evaluate_global_model()
+            
+            # TODO: ema model
+            test_loss, test_accuracy = self.evaluate_global_model()
             
             self.results['loss'].append(test_loss)
             self.results['accuracy'].append(test_accuracy)
@@ -588,19 +626,19 @@ class Server(object):
             for _modal in self.modals:
                 self.writer.add_scalars(
                     'Loss/{}'.format(_modal),
-                    {f"{self.learn_strategy}_{self.clients_modals}_{self.clients_learn_strategy}_{self.models[_modal].name} EMA: {self.use_ema}, C_{self.fraction}, K_{self.num_clients}, E_{self.local_epochs}, B_{self.batch_size}": test_loss[_modal]},
+                    {f"{self.learn_strategy}_{self.clients_modals}_{self.clients_learn_strategy}_{self.models[_modal].name} EMA: {self.use_ema}, Decay_{self.ema_decay}, C_{self.fraction}, K_{self.num_clients}, E_{self.local_epochs}, B_{self.batch_size}": test_loss[_modal]},
                     self._round
                     )
                 self.writer.add_scalars(
                     'Accuracy/{}'.format(_modal), 
-                    {f"{self.learn_strategy}_{self.clients_modals}_{self.clients_learn_strategy}_{self.models[_modal].name} EMA: {self.use_ema}, C_{self.fraction}, E_{self.local_epochs}, E_{self.local_epochs}, B_{self.batch_size}": test_accuracy[_modal]},
+                    {f"{self.learn_strategy}_{self.clients_modals}_{self.clients_learn_strategy}_{self.models[_modal].name} EMA_{self.use_ema}, Decay_{self.ema_decay}, C_{self.fraction}, E_{self.local_epochs}, E_{self.local_epochs}, B_{self.batch_size}": test_accuracy[_modal]},
                     self._round
                     )
                 # save best checkpoints
                 if test_accuracy[_modal] > self.best_accuracy[_modal]:
                     self.best_accuracy[_modal] = test_accuracy[_modal]
-                    filename = os.path.join(self.log_config["log_path"], "best_{}.pth")
+                    filename = os.path.join(self.log_config["log_path"], "best_{}.pth".format(_modal))
                     torch.save(self.models[_modal].state_dict(), filename)
-                filename = os.path.join(self.log_config["log_path"], "new_{}.pth")
+                filename = os.path.join(self.log_config["log_path"], "new_{}.pth".format(_modal))
                 torch.save(self.models[_modal].state_dict(), filename)
         self.transmit_model()

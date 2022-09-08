@@ -5,11 +5,12 @@ global_config:
   num_workers: 8
   use_ema: True # use exponential moving average
   # use_ema: False # use exponential moving average
-  ema_decay: 0.999
+  ema_decay: 0.001
 ---
 data_config:
-  data_path: "/data0/xfzhang/data/NTU_RGBD_60/" # root_dir
+  # data_path: "/data0/xfzhang/data/NTU_RGBD_60/" # root_dir
   # data_path: "/data/zhangxifan/NTU_RGBD_60/" # root_dir
+  data_path: "/mnt/ssd/zhangxifan/data/NTU_RGBD_60/" # root_dir
   dataset_name: "NTU_RGBD"
   modals: ["RGB", "Depth"]
   num_shards: 200
@@ -30,12 +31,12 @@ clients_config:
 ---
 fed_config:
   C: 1.0 # fraction
-  SS: 8 # central subjects
-  K: 12 # numbers of clients
+  SS: 5 # central subjects
+  K: 15 # numbers of clients
   R: 1000 # rounds
   E: 1 # epochs
-  SE: 1 # global_epochs
-  B: 12 # batchsize
+  SE: 10 # global_epochs
+  B: 8 # batchsize
   mu: 5
   criterion: torch.nn.CrossEntropyLoss
   optimizer: torch.optim.SGD
@@ -44,6 +45,10 @@ optim_config:
   lr: 0.001
   momentum: 0.9
   weight_decay: 0.0005
+---
+ssl_config:
+  WE: 10
+  threshold: 0.9
 ---
 init_config:
   init_type: "xavier"

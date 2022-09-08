@@ -18,7 +18,7 @@ from torch.utils.tensorboard import SummaryWriter
 if __name__ == "__main__":
     # read configuration file
     assert len(sys.argv) > 1
-    task_name = sys.argv[1].split('/')[2]
+    task_name = sys.argv[1].split('/')[2].split('.')[0]
 
     with open('{}'.format(sys.argv[1])) as c:
         configs = list(yaml.load_all(c, Loader=yaml.FullLoader))
@@ -30,15 +30,16 @@ if __name__ == "__main__":
 
     fed_config = configs[4]["fed_config"]
     optim_config = configs[5]["optim_config"]
-    init_config = configs[6]["init_config"]
-    model_config = configs[7]["model_config"]
-    log_config = configs[8]["log_config"]
+    ssl_config = configs[6]["ssl_config"]
+    init_config = configs[7]["init_config"]
+    model_config = configs[8]["model_config"]
+    log_config = configs[9]["log_config"]
     
     # modify global_config
     global_config["is_para"] = (len(init_config["gpu_ids"]) > 1)
 
     # modify log_path to contain current time
-    log_config["log_path"] = os.path.join(log_config["log_path"], str(datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S")) + task_name)
+    log_config["log_path"] = os.path.join(log_config["log_path"], str(datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S_")) + task_name)
 
     # initiate TensorBaord for tracking losses and metrics
     writer = SummaryWriter(log_dir=log_config["log_path"], filename_suffix="-FL-{}".format(task_name))
@@ -67,7 +68,7 @@ if __name__ == "__main__":
     # initialize federated learning 
     central_server = Server(writer, model_config=model_config, global_config=global_config, data_config=data_config, 
                             server_config=server_config, clients_config=clients_config,
-                            init_config=init_config, fed_config=fed_config, optim_config=optim_config, log_config=log_config)
+                            init_config=init_config, fed_config=fed_config, optim_config=optim_config, ssl_config=ssl_config, log_config=log_config)
     central_server.setup()
 
     # do federated learning

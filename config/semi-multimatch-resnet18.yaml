@@ -4,11 +4,13 @@ global_config:
   is_mp: False 
   num_workers: 4
   # is_para 
-  use_ema: False # use exponential moving average
-  ema_decay: 0.999
+  # use_ema: False # use exponential moving average
+  use_ema: True # use exponential moving average
+  ema_decay: 0.9
 ---
 data_config:
-  data_path: "/data/zhangxifan/NTU_RGBD_60/" # root_dir
+  # data_path: "/data/zhangxifan/NTU_RGBD_60/" # root_dir
+  data_path: "/mnt/ssd/zhangxifan/data/NTU_RGBD_60/" # root_dir
   dataset_name: "NTU_RGBD"
   modals: ["RGB", "Depth"]
   num_shards: 200
@@ -16,24 +18,28 @@ data_config:
 ---
 server_config:
   modals: ["RGB", "Depth"]
+  # learn_strategy: "N" # X - supervised, U - unsupervised, N - None
   learn_strategy: "X" # X - supervised, U - unsupervised, N - None
 ---
 clients_config:
   modals: ["RGB", "Depth"]
   clients_modals: # list of list, check length of clients_modals == clients_learn_strategy == clients_node
     - ["RGB", "Depth"]
+    # - ["RGB", "Depth"]
+    # - ["RGB", "Depth"]
     - ["RGB"]
     - ["Depth"]
   clients_learn_strategy: ["M", "F", "F"] 
+  # clients_learn_strategy: ["M", "M", "M"] 
   # clients_nodes: [6, 6, 6] # number of nodes for each combination, [A, B], [A], [B]
 ---
 fed_config:
-  C: 0.5 # fraction
-  SS: 6 # server subjects
-  K: 6 # numbers of clients, total 36 subjects
+  C: 1.0 # fraction
+  SS: 5 # server subjects
+  K: 15 # numbers of clients, total 36 subjects (clients + server)
   R: 1000 # rounds
-  E: 1 # epochs
-  SE: 1 # global_epochs
+  E: 1 # local epochs
+  SE: 4 # global epochs
   B: 4 # batchsize , total (mu+1)*B
   mu: 5
   criterion: torch.nn.CrossEntropyLoss
@@ -42,6 +48,10 @@ fed_config:
 optim_config:
   lr: 0.001
   momentum: 0.9
+---
+ssl_config:
+  WE: 10
+  threshold: 0.9
 ---
 init_config:
   init_type: "xavier"
@@ -57,16 +67,15 @@ model_config:
         name: TSN
         base_model: "resnet18" # bs: 4~8 per gpu
         num_class: 60
-        img_feature_dim: 256
     -   
         modal: "Depth"
         name: TSN
         base_model: "resnet18"
         num_class: 60
-        img_feature_dim: 256
 ---
 log_config:
   log_path: "./log/"
-  log_name:  "semi-continual-multimatch-resnet18-2.log"
-  tb_port: 5256
+  log_name:  "semi-multimatch-resnet18.log"
+  tb_port: 5252
   tb_host: "0.0.0.0"
+  resume: None

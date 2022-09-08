@@ -1,4 +1,4 @@
-from .datasets.NTU_RGBD import get_ntu_rgbd_train, get_ntu_rgbd_test
+from .datasets.ntu_rgbd import get_ntu_rgbd_train, get_ntu_rgbd_test
 
 import os
 import logging
@@ -169,9 +169,9 @@ def create_ntu_datasets(data_path, num_clients, num_server_subjects=0, seed=0):
     random.seed(seed)
     if num_server_subjects > 0:
         # indexes = random.choices(range(len(train_subjects)), k=num_server_subjects)
-        # indexes = random.sample(range(len(train_subjects)), k=num_server_subjects)
+        indexes = random.sample(range(len(train_subjects)), k=num_server_subjects)
         # only the first 8 subjects
-        indexes = range(num_server_subjects)
+        # indexes = range(num_server_subjects)
         server_subjects = [train_subjects[i] for i in indexes]
         clients_subjects = [train_subjects[i] for i in range(len(train_subjects)) if i not in indexes]
         server_dataset = get_ntu_rgbd_test(root_dir=data_path, subjects=server_subjects)
@@ -191,7 +191,8 @@ def create_ntu_datasets(data_path, num_clients, num_server_subjects=0, seed=0):
     local_datasets = [
             # get_ntu_rgbd_train(root_dir=data_path, subjects=split_list)
             # append server subjects to clients, perform unsupervised learning
-            get_ntu_rgbd_train(root_dir=data_path, subjects=split_list+server_subjects)
+            # get_ntu_rgbd_train(root_dir=data_path, subjects=split_list+server_subjects)
+            get_ntu_rgbd_train(root_dir=data_path, subjects=split_list)
             for split_list in split_subjects
         ]
     return local_datasets, server_dataset, test_dataset
